@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core", "ultracite/biome/react"],
+  "overrides": [
+    {
+      // Convex follows camelCase file-naming conventions; renaming would break
+      // Convex's auto-generated function paths.
+      "includes": ["packages/backend/convex/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      // TanStack Router uses $param.tsx file conventions (dollar prefix for
+      // dynamic segments); these cannot be renamed.
+      "includes": ["apps/web/src/routes/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
+    }
+  ]
+}

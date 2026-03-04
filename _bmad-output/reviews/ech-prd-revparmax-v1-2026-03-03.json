@@ -1,0 +1,332 @@
+[
+  {
+    "location": "prd-revparmax-v1.md:99",
+    "trigger_condition": "Unique constraint is company_id+date but company owns multiple properties",
+    "guard_snippet": "UNIQUE(property_id, date) -- not company_id+date",
+    "potential_consequence": "Two properties in same group collide on same audit date"
+  },
+  {
+    "location": "prd-revparmax-v1.md:144",
+    "trigger_condition": "Room count entered as 0 or negative during wizard Step 3",
+    "guard_snippet": "if (roomCount <= 0) block_advance('Room count must be ≥ 1')",
+    "potential_consequence": "RevPAR and occupancy calculations divide by zero throughout"
+  },
+  {
+    "location": "prd-revparmax-v1.md:148",
+    "trigger_condition": "Property name is whitespace-only string, passes required field check",
+    "guard_snippet": "if (name.trim().length === 0) block_advance('Property name required')",
+    "potential_consequence": "Blank property name in sidebar, slug generation produces empty string"
+  },
+  {
+    "location": "prd-revparmax-v1.md:149",
+    "trigger_condition": "User skips Step 5 and never returns; property stays permanently incomplete",
+    "guard_snippet": "property.status = 'pending_first_upload'; dashboard shows prompt until resolved",
+    "potential_consequence": "Property appears in sidebar with no data and no clear remediation path"
+  },
+  {
+    "location": "prd-revparmax-v1.md:163",
+    "trigger_condition": "First file upload fails extraction entirely; AI has no labels to map",
+    "guard_snippet": "if (extractedLabels.length === 0) skip_mapping_screen(); show_failure_flow(P1.5)",
+    "potential_consequence": "Mapping screen renders empty; user blocked with no forward path"
+  },
+  {
+    "location": "prd-revparmax-v1.md:165",
+    "trigger_condition": "User creates a new category during mapping with duplicate name of existing category",
+    "guard_snippet": "if (categories.find(c => c.name.toLowerCase() === newName.toLowerCase())) reject_duplicate()",
+    "potential_consequence": "Two categories with identical names; AI mapper ambiguity on all future uploads"
+  },
+  {
+    "location": "prd-revparmax-v1.md:165",
+    "trigger_condition": "User abandons mapping screen mid-session without confirming",
+    "guard_snippet": "on_unload: warn('Mappings not saved — confirm or discard?'); autosave draft mappings",
+    "potential_consequence": "Upload file lost; property extractor profile not initialized; next upload re-triggers first-upload flow"
+  },
+  {
+    "location": "prd-revparmax-v1.md:177",
+    "trigger_condition": "File is exactly 50 MB — boundary between accept and reject",
+    "guard_snippet": "if (fileSize >= 50_000_000) reject(); // strictly less than 50 MB accepted",
+    "potential_consequence": "Inconsistent behavior depending on whether check is > or >= 50 MB"
+  },
+  {
+    "location": "prd-revparmax-v1.md:178",
+    "trigger_condition": "User uploads a second file while previous extraction is still in-flight",
+    "guard_snippet": "if (extractionInProgress) reject_upload('Extraction in progress, please wait')",
+    "potential_consequence": "Two concurrent extractions for same property/date; race condition on verify flow state"
+  },
+  {
+    "location": "prd-revparmax-v1.md:179",
+    "trigger_condition": "No prior submissions exist; last-submission-date display is empty",
+    "guard_snippet": "if (!lastSubmission) show('No prior submissions for this property')",
+    "potential_consequence": "Undefined/null displayed instead of a first-time message"
+  },
+  {
+    "location": "prd-revparmax-v1.md:193",
+    "trigger_condition": "User enters a future date when AI cannot determine audit date from file",
+    "guard_snippet": "if (manualDate > today) warn('Audit date is in the future — confirm?')",
+    "potential_consequence": "Future-dated audit stored; pace snapshot corrupts forward-looking forecast data"
+  },
+  {
+    "location": "prd-revparmax-v1.md:193",
+    "trigger_condition": "User enters audit date more than 7 years in the past",
+    "guard_snippet": "if (manualDate < today - 7yr) warn('Date exceeds retention policy — confirm?')",
+    "potential_consequence": "File retained but date conflicts with 7-year retention window for older records"
+  },
+  {
+    "location": "prd-revparmax-v1.md:195",
+    "trigger_condition": "Extraction exceeds 30-second SLA for reports >5 MB or >10 pages",
+    "guard_snippet": "if (elapsed > 30s) show_timeout_state(); offer retry or manual entry",
+    "potential_consequence": "UI hangs indefinitely; no fallback to manual entry triggered automatically"
+  },
+  {
+    "location": "prd-revparmax-v1.md:219",
+    "trigger_condition": "All fields are green-confirmed but payment totals do not reconcile",
+    "guard_snippet": "if (sum(payments) !== room_revenue + non_room_revenue) flag_reconciliation_warning()",
+    "potential_consequence": "Financially inconsistent audit accepted silently; corrupts MTD revenue totals"
+  },
+  {
+    "location": "prd-revparmax-v1.md:220",
+    "trigger_condition": "Red field is non-applicable for this property (e.g. competition with no competitors set up)",
+    "guard_snippet": "if (field.required && !property.hasCompetitors) allow_skip_with_N_A_reason()",
+    "potential_consequence": "User permanently blocked from submitting; red field cannot be filled or dismissed"
+  },
+  {
+    "location": "prd-revparmax-v1.md:214",
+    "trigger_condition": "Overwriting a confirmed record that already fed downstream forecast calculations",
+    "guard_snippet": "on_overwrite: invalidate_forecast_cache(date); recalculate_rolling_forecast()",
+    "potential_consequence": "Forecast shows stale values derived from overwritten data until next submission"
+  },
+  {
+    "location": "prd-revparmax-v1.md:222",
+    "trigger_condition": "Network drops mid-extraction; user never receives error or success",
+    "guard_snippet": "timeout_guard: if no response in 60s, show_error_state with retry option",
+    "potential_consequence": "Verify flow never loads; silent failure contradicts acceptance criterion"
+  },
+  {
+    "location": "prd-revparmax-v1.md:223",
+    "trigger_condition": "User closes browser/tab during verify flow before submitting",
+    "guard_snippet": "autosave verify state per session; resume_on_return if extraction_id still active",
+    "potential_consequence": "User must re-upload and re-extract; extraction quota consumed twice"
+  },
+  {
+    "location": "prd-revparmax-v1.md:235",
+    "trigger_condition": "Two categories share similar names and AI maps both to same category (false positive)",
+    "guard_snippet": "if (confidence < threshold && multiple_candidates) force_yellow_with_disambiguation_choices()",
+    "potential_consequence": "Revenue silently merged across distinct categories; reporting totals wrong"
+  },
+  {
+    "location": "prd-revparmax-v1.md:237",
+    "trigger_condition": "A mapped category is deleted from Property Settings post-onboarding",
+    "guard_snippet": "if (category.hasHistoricalRecords) block_delete('Category has historical data — archive instead')",
+    "potential_consequence": "Historical revenue records orphaned; auto-mapper broken for subsequent uploads"
+  },
+  {
+    "location": "prd-revparmax-v1.md:244",
+    "trigger_condition": "Two reports for the same property and same date uploaded; filename collision",
+    "guard_snippet": "filename = `${slug}-${type}-${date}-${nanoid(4)}.${ext}` // add collision suffix",
+    "potential_consequence": "Second upload overwrites first in storage silently despite UI showing both"
+  },
+  {
+    "location": "prd-revparmax-v1.md:248",
+    "trigger_condition": "AI cannot determine both report type AND date from content",
+    "guard_snippet": "if (!date) prompt_date(); if (!type) default_to('report'); combine both guards",
+    "potential_consequence": "File stored as `[slug]-report-undefined.pdf` if date prompt not shown"
+  },
+  {
+    "location": "prd-revparmax-v1.md:261",
+    "trigger_condition": "ZIP archive contains nested ZIPs",
+    "guard_snippet": "if (file.isZip && depth > 1) skip_and_flag('Nested archives not supported')",
+    "potential_consequence": "Infinite recursion or unpredictable partial processing of nested archives"
+  },
+  {
+    "location": "prd-revparmax-v1.md:262",
+    "trigger_condition": "Two files in bulk batch have the same extracted audit date",
+    "guard_snippet": "if (batchDates.hasDuplicate(extractedDate)) flag_conflict(files, extractedDate)",
+    "potential_consequence": "One file silently overwrites the other; data loss with no user warning"
+  },
+  {
+    "location": "prd-revparmax-v1.md:260",
+    "trigger_condition": "All files in bulk backfill batch fail extraction",
+    "guard_snippet": "if (failedCount === totalCount) abort_backfill(); show_full_failure_state()",
+    "potential_consequence": "Backfill summary shows 0 successes; no guidance on whether to proceed or abandon"
+  },
+  {
+    "location": "prd-revparmax-v1.md:265",
+    "trigger_condition": "Second backfill initiated while first is still processing",
+    "guard_snippet": "if (backfill.status === 'in_progress') block_new_backfill('Backfill already running')",
+    "potential_consequence": "Concurrent backfills race on same date slots; duplicate or conflicting records"
+  },
+  {
+    "location": "prd-revparmax-v1.md:295",
+    "trigger_condition": "Manual entry submitted for a date more than 365 days in the future",
+    "guard_snippet": "if (entryDate > today + 365) reject('Manual entry allowed max 365 days ahead')",
+    "potential_consequence": "Pace snapshot table grows with unbounded future placeholder rows"
+  },
+  {
+    "location": "prd-revparmax-v1.md:296",
+    "trigger_condition": "ADR entered with Rooms Occupied = 0; room revenue = $0 but ADR nonzero",
+    "guard_snippet": "if (roomsOccupied === 0 && adr > 0) warn('Rooms Occupied is 0 — ADR has no effect on revenue')",
+    "potential_consequence": "Confusing UI state; owner may believe ADR is recorded when revenue derivation ignores it"
+  },
+  {
+    "location": "prd-revparmax-v1.md:311",
+    "trigger_condition": "Property in a timezone where 'today' differs from server's today",
+    "guard_snippet": "status_date = toLocalDate(now, property.timezone) // require timezone on property setup",
+    "potential_consequence": "Property shows ⚠️ missing for a submission already received; or ✅ for a date not yet closed"
+  },
+  {
+    "location": "prd-revparmax-v1.md:323",
+    "trigger_condition": "Ownership group has hundreds of properties; selector has no search/pagination",
+    "guard_snippet": "if (properties.length > 20) show_searchable_dropdown() else show_list()",
+    "potential_consequence": "Selector becomes unusable; large groups cannot navigate to specific property"
+  },
+  {
+    "location": "prd-revparmax-v1.md:341",
+    "trigger_condition": "Property opened January when it started operations February last year — LY gap mid-month",
+    "guard_snippet": "if (lyDataExists for some days in period) show partial LY with coverage indicator",
+    "potential_consequence": "Chart renders incomplete LY line without explaining why some dates are missing"
+  },
+  {
+    "location": "prd-revparmax-v1.md:362",
+    "trigger_condition": "LY value for a metric is 0; YoY % change is division by zero",
+    "guard_snippet": "if (lyValue === 0) display '∞%' or 'N/A' instead of calculated percentage",
+    "potential_consequence": "Divide-by-zero crashes chart render or displays NaN/Infinity to user"
+  },
+  {
+    "location": "prd-revparmax-v1.md:376",
+    "trigger_condition": "Non-room revenue category has negative amount (refund exceeds revenue)",
+    "guard_snippet": "allow negative values; render negative bars in donut/table with distinct color",
+    "potential_consequence": "Donut chart receives negative segment; chart library throws or renders incorrectly"
+  },
+  {
+    "location": "prd-revparmax-v1.md:388",
+    "trigger_condition": "Only competitor is deleted from settings after competition view was accessible",
+    "guard_snippet": "if (property.competitors.length === 0) show_empty_state_with_add_competitor_prompt()",
+    "potential_consequence": "View becomes inaccessible again without clear explanation of why"
+  },
+  {
+    "location": "prd-revparmax-v1.md:389",
+    "trigger_condition": "No competitors have ≥ 7 days of data in selected period; chart is fully empty",
+    "guard_snippet": "if (eligibleCompetitors.length === 0) show_empty_state('No competitor has 7+ days of data')",
+    "potential_consequence": "Chart renders with axes but no lines; user cannot distinguish from broken chart"
+  },
+  {
+    "location": "prd-revparmax-v1.md:420",
+    "trigger_condition": "All four forecast chart lines are unavailable simultaneously (new property, no budget, no LY)",
+    "guard_snippet": "if (availableLines.length === 0) show_empty_state('Add budget and submit data to see forecast')",
+    "potential_consequence": "Chart renders empty with no guidance; user has no path to remedy"
+  },
+  {
+    "location": "prd-revparmax-v1.md:423",
+    "trigger_condition": "View accessed on last day of the month; chart has one future data point",
+    "guard_snippet": "if (remainingDays === 0) show_message('Month ends today — no future dates to forecast')",
+    "potential_consequence": "Forecast table has one row or zero rows with no explanation"
+  },
+  {
+    "location": "prd-revparmax-v1.md:434",
+    "trigger_condition": "LY pace unavailable AND OTB is 0 for remaining dates; projection = $0",
+    "guard_snippet": "if (otb === 0 && !lyPace) show_projection_as_unavailable, not $0",
+    "potential_consequence": "Owner sees $0 forecast and believes property has no bookings when data is simply missing"
+  },
+  {
+    "location": "prd-revparmax-v1.md:445",
+    "trigger_condition": "LY was a leap year; Feb 29 has no TY equivalent for PACE NET calculation",
+    "guard_snippet": "if (lyDate === Feb29 && !isLeapYear(ty)) map to Feb 28 for comparison with note",
+    "potential_consequence": "Feb 29 row throws null reference or shows NaN in PACE NET column"
+  },
+  {
+    "location": "prd-revparmax-v1.md:458",
+    "trigger_condition": "User closes tab after adjusting budget controls without clicking 'Save as budget'",
+    "guard_snippet": "beforeunload: warn('You have unsaved budget adjustments — save or discard?')",
+    "potential_consequence": "Owner believes budget was updated; forecasts continue using old values silently"
+  },
+  {
+    "location": "prd-revparmax-v1.md:459",
+    "trigger_condition": "Budget Occupancy input set above 100%",
+    "guard_snippet": "if (budgetOccupancy > 100) clamp_to_100 or show_error('Occupancy cannot exceed 100%')",
+    "potential_consequence": "RevPAR and revenue projections exceed physical capacity; nonsense forecast values"
+  },
+  {
+    "location": "prd-revparmax-v1.md:474",
+    "trigger_condition": "Yellow threshold set equal to red threshold in property settings",
+    "guard_snippet": "if (yellowLow <= redThreshold) reject_save('Yellow threshold must be above red threshold')",
+    "potential_consequence": "Dates flip between yellow and red with no stable state; UI flickers or shows wrong color"
+  },
+  {
+    "location": "prd-revparmax-v1.md:483",
+    "trigger_condition": "LY pickup rate at equivalent advance window was 0; pickup velocity comparison divides by zero",
+    "guard_snippet": "if (lyPickupRate === 0) skip_velocity_alert or show 'No LY baseline available'",
+    "potential_consequence": "Division by zero throws or produces Infinity alert; alert fires spuriously or crashes"
+  },
+  {
+    "location": "prd-revparmax-v1.md:483",
+    "trigger_condition": "Pickup velocity alert has no defined resolution condition",
+    "guard_snippet": "alert.resolved_when = 'pickupRate >= 50% of LY for 2 consecutive days' // define condition",
+    "potential_consequence": "Alert never clears; sidebar badge persists indefinitely confusing owner"
+  },
+  {
+    "location": "prd-revparmax-v1.md:501",
+    "trigger_condition": "'LY distribution' seasonal split chosen but property has no LY data",
+    "guard_snippet": "if (!property.hasLYData) disable_LY_distribution_option with tooltip explaining why",
+    "potential_consequence": "LY distribution selected; all months receive 0 or undefined budget values"
+  },
+  {
+    "location": "prd-revparmax-v1.md:503",
+    "trigger_condition": "CSV budget import contains duplicate category+month rows",
+    "guard_snippet": "if (csv.hasDuplicates(category, month)) reject_with_line_numbers or use last-row-wins with warning",
+    "potential_consequence": "Unpredictable budget values; last-row or first-row wins silently without user knowledge"
+  },
+  {
+    "location": "prd-revparmax-v1.md:511",
+    "trigger_condition": "Fiscal year start date changed after year has begun; original budget re-lock point is ambiguous",
+    "guard_snippet": "if (fiscalYearStart changed && year_in_progress) warn and re-confirm original budget lock",
+    "potential_consequence": "Original budget column becomes editable mid-year, destroying read-only baseline"
+  },
+  {
+    "location": "prd-revparmax-v1.md:513",
+    "trigger_condition": "Actuals submitted for a past date (backdated correction); rolling forecast not recalculated",
+    "guard_snippet": "on_backdated_submission: trigger rolling_forecast_recalc(from=submission.date)",
+    "potential_consequence": "Rolling forecast shows stale projection based on pre-correction actuals"
+  },
+  {
+    "location": "prd-revparmax-v1.md:528",
+    "trigger_condition": "Data submission gaps exist within the N consecutive days window for variance alert",
+    "guard_snippet": "define gap_handling: gaps count as missing (reset N) OR treated as worst-case (continue N)",
+    "potential_consequence": "Alert fires on 3 days of real data plus 2 missing days, or never fires despite sustained underperformance"
+  },
+  {
+    "location": "prd-revparmax-v1.md:530",
+    "trigger_condition": "Variance alert dismissed but underlying condition persists beyond dismissal",
+    "guard_snippet": "after_dismiss: re-fire after M days if condition still met (define M, default 7)",
+    "potential_consequence": "Alert suppressed indefinitely; owner never sees persistent underperformance signal again"
+  },
+  {
+    "location": "prd-revparmax-v1.md:529",
+    "trigger_condition": "Variance threshold X set to 0%; alert fires every day regardless of performance",
+    "guard_snippet": "if (X < 1) reject_save('Threshold must be at least 1%')",
+    "potential_consequence": "Alert spam; badge always active; owner ignores all future alerts"
+  },
+  {
+    "location": "prd-revparmax-v1.md:548",
+    "trigger_condition": "Alert detail links to forecast date range that no longer exists (month rolled over)",
+    "guard_snippet": "if (forecastDate < today) redirect to historical view for that date instead",
+    "potential_consequence": "Alert links to a 404 or empty forecast; owner loses context for the recommendation"
+  },
+  {
+    "location": "prd-revparmax-v1.md:563",
+    "trigger_condition": "File record exists in DB but underlying file deleted from object storage",
+    "guard_snippet": "on_download: if (!storage.exists(file.key)) show_error('File unavailable — contact support')",
+    "potential_consequence": "Download button returns 404 or blank; no user-facing explanation"
+  },
+  {
+    "location": "prd-revparmax-v1.md:643",
+    "trigger_condition": "Malware scan fails or times out; upload proceeds without scan result",
+    "guard_snippet": "if (scanResult === 'timeout' || 'error') reject_upload('Security scan failed — try again')",
+    "potential_consequence": "Unscanned files reach AI extraction pipeline; potential code execution in parser"
+  },
+  {
+    "location": "prd-revparmax-v1.md:644",
+    "trigger_condition": "Night auditor account needs to be re-scoped to a different property",
+    "guard_snippet": "define admin flow: GM can reassign auditor account to different property_id",
+    "potential_consequence": "No mechanism to move auditor; orphaned account or GM must delete and recreate"
+  }
+]

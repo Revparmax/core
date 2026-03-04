@@ -1,75 +1,89 @@
-import Header from "@/components/header";
-import Loader from "@/components/loader";
-import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "@/components/ui/sonner";
-import { link, orpc } from "@/utils/orpc";
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import type { ConvexQueryClient } from "@convex-dev/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import { useState } from "react";
-import type { RouterClient } from "@orpc/server";
-import { createTanstackQueryUtils } from "@orpc/tanstack-query";
-import type { appRouter } from "../../../server/src/routers";
-import { createORPCClient } from "@orpc/client";
 import {
+  createRootRouteWithContext,
   HeadContent,
   Outlet,
-  createRootRouteWithContext,
-  useRouterState,
+  Scripts,
+  useRouteContext,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import "../index.css";
+import { createServerFn } from "@tanstack/react-start";
+
+import { Toaster } from "@/components/ui/sonner";
+import { authClient } from "@/lib/auth-client";
+import { getToken } from "@/lib/auth-server";
+
+import Header from "../components/header";
+import appCss from "../index.css?url";
+
+const getAuth = createServerFn({ method: "GET" }).handler(async () => {
+  return await getToken().catch(() => null);
+});
 
 export interface RouterAppContext {
-  orpc: typeof orpc;
+  convexQueryClient: ConvexQueryClient;
   queryClient: QueryClient;
 }
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
-  component: RootComponent,
   head: () => ({
     meta: [
       {
-        title: "app",
+        charSet: "utf-8",
       },
       {
-        name: "description",
-        content: "app is a web application",
+        name: "viewport",
+        content: "width=device-width, initial-scale=1",
+      },
+      {
+        title: "My App",
       },
     ],
     links: [
       {
-        rel: "icon",
-        href: "/favicon.ico",
+        rel: "stylesheet",
+        href: appCss,
       },
     ],
   }),
+
+  component: RootDocument,
+  beforeLoad: async (ctx) => {
+    const token = await getAuth();
+    if (token) {
+      ctx.context.convexQueryClient.serverHttpClient?.setAuth(token);
+    }
+    return {
+      isAuthenticated: !!token,
+      token,
+    };
+  },
 });
 
-function RootComponent() {
-  const isFetching = useRouterState({
-    select: (s) => s.isLoading,
-  });
-
-  const [client] = useState<RouterClient<typeof appRouter>>(() => createORPCClient(link));
-  const [orpcUtils] = useState(() => createTanstackQueryUtils(client));
-
+function RootDocument() {
+  const context = useRouteContext({ from: Route.id });
   return (
-    <>
-      <HeadContent />
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          disableTransitionOnChange
-          storageKey="vite-ui-theme"
-        >
-          <div className="grid grid-rows-[auto_1fr] h-svh">
+    <ConvexBetterAuthProvider
+      authClient={authClient}
+      client={context.convexQueryClient.convexClient}
+      initialToken={context.token}
+    >
+      <html className="dark" lang="en">
+        <head>
+          <HeadContent />
+        </head>
+        <body>
+          <div className="grid h-svh grid-rows-[auto_1fr]">
             <Header />
-            {isFetching ? <Loader /> : <Outlet />}
+            <Outlet />
           </div>
           <Toaster richColors />
-        </ThemeProvider>
-      <TanStackRouterDevtools position="bottom-left" />
-      <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />
-    </>
+          <TanStackRouterDevtools position="bottom-left" />
+          <Scripts />
+        </body>
+      </html>
+    </ConvexBetterAuthProvider>
   );
 }

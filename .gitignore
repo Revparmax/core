@@ -1,2 +1,8 @@
 node_modules
 .turbo
+*.mysql
+.direnv
+_bmad
+.DS_Store
+.agents/
+.beads/

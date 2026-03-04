@@ -1,0 +1,194 @@
+[
+  {
+    "location": "arch-revparmax-v1.1.md:581",
+    "trigger_condition": "extractorProfile.mappings (v.any) receives malformed data from a verify bug",
+    "guard_snippet": "validate mappings shape: if (typeof v !== 'string' || !isId(v)) throw ConvexError('Bad mapping')",
+    "potential_consequence": "Corrupt JSON injected verbatim into Claude system prompt; extraction broken permanently for property"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:321",
+    "trigger_condition": "Two different companies create properties with identical trimmed names; same slug generated",
+    "guard_snippet": "slug uniqueness check must include companyId: .eq('companyId', profile.companyId).eq('slug', slug)",
+    "potential_consequence": "Global slug collision; property routing ambiguous; potential cross-tenant data access via route params"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:304",
+    "trigger_condition": "Auditor userProfile exists but propertyId is undefined due to registration bug",
+    "guard_snippet": "if (profile.role === 'auditor' && !profile.propertyId) throw new ConvexError('Auditor account not configured')",
+    "potential_consequence": "undefined !== any Id is always true; auditor silently denied every request with no actionable error"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:297",
+    "trigger_condition": "Better Auth sign-up succeeds but userProfile document creation fails silently",
+    "guard_snippet": "define explicit onUserCreate hook in auth.ts; verify profile existence in sign-in flow before token issuance",
+    "potential_consequence": "Authenticated user permanently locked out with 'No profile' on every Convex call; no recovery path"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:730",
+    "trigger_condition": "App-level 30s timeout not implemented as Promise.race; Convex action runs to 10-minute hard limit",
+    "guard_snippet": "await Promise.race([runClaude(), sleep(30_000).then(() => { throw new Error('timeout') })]); mark timeout in catch",
+    "potential_consequence": "extractionStatus stays 'in_progress' for 10 min; property-level upload lock never released"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:604",
+    "trigger_condition": "extractionResults with 24hr expiresAt TTL have no cleanup cron defined anywhere in architecture",
+    "guard_snippet": "crons.daily('cleanup-expired-extractions', { hourUTC: 3 }, internal.ingestion.deleteExpiredResults)",
+    "potential_consequence": "18,250+ orphaned extractionResults records accumulate per year at 50 properties; unbounded DB growth"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:716",
+    "trigger_condition": "Client uploads file to Convex storage then crashes before calling recordUpload mutation",
+    "guard_snippet": "crons.daily('cleanup-orphaned-storage') deletes storageIds absent from any dataImports record after 1hr",
+    "potential_consequence": "Orphaned files accumulate in Convex storage with no record; untracked storage cost, no cleanup path"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:723",
+    "trigger_condition": "File flagged infected or scan_failed; rejected upload remains in Convex storage indefinitely",
+    "guard_snippet": "on scan reject: await ctx.storage.delete(import.storageId); set dataImports.storageId = undefined",
+    "potential_consequence": "Malware or suspicious files persist in tenant storage; regulatory risk; storage quota consumed by rejected files"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:932",
+    "trigger_condition": "Specific past paceSnapshot for (d_ly, d_ly - advance_days) missing; not total LY absence",
+    "guard_snippet": "if (!ly_otb_at_same_advance) skip date's pickup calc; use flat OTB × budget_adr fallback for that date only",
+    "potential_consequence": "NaN from null subtraction propagates into ly_remaining_pickup and projected_rooms for affected dates"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:939",
+    "trigger_condition": "paceSnapshot from exactly 7 days ago missing for a forecastDate; otb_7_days_ago[d] is null",
+    "guard_snippet": "search nearest snapshot within ±3 days of target; if none found, velocity_ratio = 1.0 with 'sparse data' label",
+    "potential_consequence": "NaN velocity_ratio; clamp(NaN, 0, 3) = NaN; projected_rooms[d] = NaN; forecast chart breaks for affected dates"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:957",
+    "trigger_condition": "budgetAdr, current_otb_adr, and lyAdr all null; rate fallback chain fully exhausted",
+    "guard_snippet": "if (!rate) { projected_revenue[d] = null; mark date as 'rate unavailable' in chart; skip multiplication }",
+    "potential_consequence": "projected_rooms × null = NaN; silently renders as $0 or crashes forecast chart render"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:1132",
+    "trigger_condition": "AWS Malware Protection delivers results via SNS/EventBridge events, not synchronous poll endpoint",
+    "guard_snippet": "implement webhook internalHttpAction to receive GuardDuty findings; do not poll AWS API from Convex action",
+    "potential_consequence": "Polling loop receives no response; all uploads time out at 15s with scan_failed; extraction pipeline blocked"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:899",
+    "trigger_condition": "XLSX file has multiple sheets; SheetJS reads only first sheet by default",
+    "guard_snippet": "iterate workbook.SheetNames; select sheet with highest numeric cell count or concatenate all sheets",
+    "potential_consequence": "Revenue categories on sheets 2+ silently omitted; partial extraction with no warning to auditor"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:900",
+    "trigger_condition": "50MB CSV or multi-page PDF parsed to text exceeds Claude claude-sonnet-4-6 context window",
+    "guard_snippet": "estimate token count before Claude call; if > 150_000 tokens, truncate with warning or reject with guidance",
+    "potential_consequence": "Claude API returns 400 context-length error; extraction fails with no user-visible explanation about file size"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:748",
+    "trigger_condition": "Two verify sessions for same property confirm simultaneously; both write to extractorProfile.mappings",
+    "guard_snippet": "confirmVerify reads current mappings and merges new labels; use patch not replace to avoid clobbering concurrent writes",
+    "potential_consequence": "One session's corrected label mappings silently overwritten; extractor profile regresses to prior state"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:534",
+    "trigger_condition": "budgets.month stored with value outside 1–12 range (0, 13, -1) via CSV import or direct call",
+    "guard_snippet": "if (month < 1 || month > 12) throw new ConvexError('month must be 1–12')",
+    "potential_consequence": "Invalid budget row included in month grouping; forecast month-end totals wrong or query throws"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:933",
+    "trigger_condition": "ly_otb_at_stay uses last paceSnapshot for d_ly, not verified auditRecord.roomsOccupied as actuals",
+    "guard_snippet": "ly_final_rooms = auditRecord(d_ly).roomStatistics.roomsOccupied ?? lastPaceSnapshot(d_ly).roomsOnBooks",
+    "potential_consequence": "LY remaining pickup understated when OTB diverges from actuals; forecast underestimates fill for busy dates"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:322",
+    "trigger_condition": "totalRooms updated upward after audit records exist; historical occupancy exceeds 100%",
+    "guard_snippet": "on totalRooms change: warn 'N historical records will show recalculated occupancy — some may exceed 100%'",
+    "potential_consequence": "Dashboard and history charts display impossible >100% occupancy for past dates without explanation"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:708",
+    "trigger_condition": "Lock check query and generateUploadUrl are separate Convex operations; race window between them",
+    "guard_snippet": "combine lock check + generateUploadUrl in single mutation: if (inFlight) throw; else return ctx.storage.generateUploadUrl()",
+    "potential_consequence": "Two simultaneous uploads both pass lock check; concurrent extractions race on same property/date"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:378",
+    "trigger_condition": "auditDate stored as string with no ISO-8601 format validation at mutation boundary",
+    "guard_snippet": "if (!/^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$/.test(auditDate)) throw ConvexError('Invalid date')",
+    "potential_consequence": "Non-ISO strings break date sort and comparison; forecast and history queries return wrong or empty results"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:563",
+    "trigger_condition": "Alert re-fired by cron (status → active); next day cron sees condition still met; fires again without new dismissal",
+    "guard_snippet": "on re-fire: set refireAfter = now + 7_days; require new explicit dismissal before next re-fire cycle",
+    "potential_consequence": "Alert fires every cron cycle after first re-fire with no dampening; owner receives daily alert spam"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:463",
+    "trigger_condition": "Multiple paymentTypes records have isDefault=true for same propertyId; no uniqueness constraint",
+    "guard_snippet": "before insert: if (await ctx.db.query('paymentTypes').withIndex('by_propertyId').filter(p => p.isDefault).first()) reject",
+    "potential_consequence": "UI shows multiple default payment types; report grouping logic picks arbitrary default; payment totals wrong"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:349",
+    "trigger_condition": "fileSizeBytes is client-provided value; actual file size in Convex storage never verified server-side",
+    "guard_snippet": "after upload: fetch storage metadata via ctx.storage.getMetadata(storageId); compare actual vs reported size",
+    "potential_consequence": "Client spoofs fileSizeBytes as 1 byte; 50MB+ file bypasses size guard and reaches malware scan and extraction"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:807",
+    "trigger_condition": "Large categories list + full mappings + 365 pace rows all injected into single Claude system prompt",
+    "guard_snippet": "measure token count pre-call; if > 150_000 tokens, truncate mappings to most-recently-confirmed 200 labels",
+    "potential_consequence": "Claude API rejects with context_length_exceeded; extraction fails for mature properties with rich PMS history"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:860",
+    "trigger_condition": "PMS report uses accounting notation '(1,234.56)' for negative amounts; Claude extracts as positive",
+    "guard_snippet": "add to system prompt: 'Parenthesized amounts are negative: (1234.56) must be extracted as -1234.56'",
+    "potential_consequence": "Refund amounts extracted as positive revenue; reconciliation check passes incorrectly; totals overstated"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:963",
+    "trigger_condition": "Actuals sum in forecast includes auditRecords with status 'draft' or 'pending_verification'",
+    "guard_snippet": "filter: auditRecord.status === 'verified' only when summing past actuals for month-end projection",
+    "potential_consequence": "Unconfirmed draft entries inflate forecast_total; month-end projection overstated until verification"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:1112",
+    "trigger_condition": "7-year file deletion cron deletes Convex storage objects; corresponding dataImports DB records remain",
+    "guard_snippet": "on file deletion: set dataImports.storageId = undefined; add dataImports.fileDeletedAt timestamp",
+    "potential_consequence": "All download links for 7+ year old files return 'file unavailable' without DB reflecting this state"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:1113",
+    "trigger_condition": "Churned property document deletion order unspecified; roomStatistics may be deleted before auditRecords",
+    "guard_snippet": "deletion order: nonRoomRevenue → roomStatistics → paymentRecords → competitionData → auditRecords → dataImports → property",
+    "potential_consequence": "Queries joining on auditId find no roomStatistics mid-deletion; silent partial data returned to any concurrent reader"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:697",
+    "trigger_condition": "Auditor hits role guard redirect; no target route defined for the redirect destination",
+    "guard_snippet": "throw redirect({ to: '/$propertyId/upload', params: { propertyId: profile.propertyId! } })",
+    "potential_consequence": "Redirect throws routing error or lands on 404; auditor stuck in redirect loop or blank page"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:683",
+    "trigger_condition": "getAuth server function throws (auth service unavailable); context.isAuthenticated is undefined not false",
+    "guard_snippet": "catch all errors in getAuth: return { isAuthenticated: false, session: null }; never propagate auth service errors as 500",
+    "potential_consequence": "SSR throws unhandled exception; entire app renders error boundary or blank page during auth service blip"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:364",
+    "trigger_condition": "extractionId field in dataImports has no defined purpose; never populated if action crashes before setting it",
+    "guard_snippet": "define extractionId as Convex scheduler job ID returned by ctx.scheduler.runAfter; store it to enable cancellation",
+    "potential_consequence": "No handle to cancel or query a stuck in_progress extraction; debugging hung extractions requires manual DB inspection"
+  },
+  {
+    "location": "arch-revparmax-v1.1.md:726",
+    "trigger_condition": "Claude API returns 429 or 503 during extraction action; no retry strategy defined",
+    "guard_snippet": "exponential backoff: 3 retries with 2s/4s/8s delays before marking status 'failed'; log failure reason",
+    "potential_consequence": "Transient Claude outage permanently fails all in-flight extractions; auditors must manually re-upload to retry"
+  }
+]

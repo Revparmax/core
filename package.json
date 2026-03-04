@@ -1,34 +1,50 @@
 {
-  "name": "app",
+  "name": "my-better-t-app",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "dotenv": "^17.2.2",
+      "zod": "^4.1.13",
+      "typescript": "^5",
+      "convex": "^1.32.0",
+      "better-auth": "1.4.9",
+      "@convex-dev/better-auth": "^0.10.11"
+    }
+  },
+  "type": "module",
   "scripts": {
-    "check": "biome check --write .",
     "dev": "turbo dev",
     "build": "turbo build",
     "check-types": "turbo check-types",
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
-    "dev:server": "turbo -F server dev",
-    "db:push": "turbo -F server db:push",
-    "db:studio": "turbo -F server db:studio",
-    "db:generate": "turbo -F server db:generate",
-    "db:migrate": "turbo -F server db:migrate"
+    "dev:server": "turbo -F @my-better-t-app/backend dev",
+    "dev:setup": "turbo -F @my-better-t-app/backend dev:setup",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "prepare": "husky"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@my-better-t-app/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
   "devDependencies": {
-    "turbo": "^2.5.4",
-    "@biomejs/biome": "2.1.2",
-    "ultracite": "5.1.1",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.1.2"
+    "@biomejs/biome": "2.4.0",
+    "@my-better-t-app/config": "workspace:*",
+    "husky": "latest",
+    "lint-staged": "latest",
+    "turbo": "^2.6.3",
+    "typescript": "catalog:",
+    "ultracite": "7.2.4"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,jsonc,css,scss,md,mdx}": [
-      "npx ultracite format"
+      "bun x ultracite fix"
     ]
   },
   "packageManager": "bun@1.2.16"

@@ -1,30 +1,15 @@
-import { VitePWA } from 'vite-plugin-pwa';
 import tailwindcss from "@tailwindcss/vite";
-import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import react from "@vitejs/plugin-react";
-import path from "node:path";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
-  plugins: [
-    tailwindcss(),
-    tanstackRouter({}),
-    react(),
-    VitePWA({
-      registerType: "autoUpdate",
-      manifest: {
-        name: "app",
-        short_name: "app",
-        description: "app - PWA Application",
-        theme_color: "#0c0c0c",
-      },
-      pwaAssets: { disabled: false, config: true },
-      devOptions: { enabled: true },
-    })
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+  plugins: [tsconfigPaths(), tailwindcss(), tanstackStart(), viteReact()],
+  server: {
+    port: 3001,
+  },
+  ssr: {
+    noExternal: ["@convex-dev/better-auth"],
   },
 });
