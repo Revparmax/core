@@ -26,7 +26,13 @@ export const nonRoomRevenue = defineTable({
   propertyId: v.id("properties"),
   categoryId: v.id("revenueCategories"),
   amount: v.number(), // negatives allowed (refunds)
-  source: v.string(),
+  source: v.string(), // raw label from the source file/system
+  importId: v.optional(v.id("dataImports")), // null for api/manual sources
+  sourceType: v.union(
+    v.literal("upload"),
+    v.literal("api"),
+    v.literal("manual")
+  ),
 })
   .index("by_auditId", ["auditId"])
   .index("by_propertyId_categoryId", ["propertyId", "categoryId"]);

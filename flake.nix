@@ -15,6 +15,7 @@
           packages = [
             pkgs.nodejs_22   # ≥ 22.12 from nixos-unstable
             pkgs.bun
+            pkgs.gitleaks
           ];
         };
       });

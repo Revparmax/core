@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 
+import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
 import { requireUserProfile } from "../lib/withAuth";
 
@@ -62,7 +63,7 @@ export const createProperty = mutation({
       );
     }
 
-    return await ctx.db.insert("properties", {
+    const propertyId = await ctx.db.insert("properties", {
       companyId,
       name: trimmedName,
       slug,
@@ -76,6 +77,14 @@ export const createProperty = mutation({
       paceRedThresholdPct: 10,
       pickupVelocityThresholdPct: 50,
     });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.revenue.internalMutations.seedDefaultCategories,
+      { propertyId, companyId }
+    );
+
+    return propertyId;
   },
 });
 

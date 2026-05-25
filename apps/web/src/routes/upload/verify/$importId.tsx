@@ -2,7 +2,7 @@ import { api } from "@my-better-t-app/backend/convex/_generated/api";
 import type { Id } from "@my-better-t-app/backend/convex/_generated/dataModel";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -42,14 +42,25 @@ const FIELD_ORDER = [
 
 type ConfidenceLevel = "green" | "yellow" | "red";
 
-interface Category {
+interface CategoryOption {
   _id: string;
+  displayOrder: number;
   name: string;
+  parentDisplayOrder: number;
+  parentId: string | null;
+  parentName: string | null;
+}
+
+interface CategoryGroup {
+  children: CategoryOption[];
+  parentId: string | null;
+  parentName: string;
 }
 
 interface MappingState {
   amount: number;
   confidence: number;
+  isManual: boolean;
   proposedCategoryId: string | null;
   selectedCategoryId: string | null;
   skipped: boolean;
@@ -69,6 +80,12 @@ interface PaymentEntry {
   paymentType: string;
 }
 
+interface PaymentState {
+  amount: number;
+  paymentType: string;
+  skipped: boolean;
+}
+
 interface ProposedMapping {
   amount: number;
   confidence: number;
@@ -77,7 +94,7 @@ interface ProposedMapping {
 }
 
 interface VerifyDataShape {
-  categories: Category[];
+  categories: CategoryOption[];
   dataImport: {
     _id: Id<"dataImports">;
     originalFilename: string;
@@ -142,7 +159,23 @@ function getDateWarning(dateStr: string): string | null {
   return null;
 }
 
-// ── pure sub-components (no state, no hooks) ───────────────────────────────────
+function buildCategoryGroups(categories: CategoryOption[]): CategoryGroup[] {
+  const groupMap = new Map<string, CategoryGroup>();
+  for (const cat of categories) {
+    const key = cat.parentId ?? "__none__";
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        parentId: cat.parentId,
+        parentName: cat.parentName ?? "Other",
+        children: [],
+      });
+    }
+    groupMap.get(key)?.children.push(cat);
+  }
+  return [...groupMap.values()];
+}
+
+// ── ConfidencePip ──────────────────────────────────────────────────────────────
 
 function ConfidencePip({ level }: { level: ConfidenceLevel }) {
   const colors: Record<ConfidenceLevel, string> = {
@@ -167,28 +200,7 @@ function SectionHeading({ children }: { children: string }) {
   );
 }
 
-function ReconciliationBanner({
-  revenueTotal,
-  paymentsTotal,
-}: {
-  revenueTotal: number;
-  paymentsTotal: number;
-}) {
-  const diff = Math.abs(revenueTotal - paymentsTotal);
-  if (diff < 1) {
-    return null;
-  }
-  return (
-    <div
-      className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800 text-sm dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-      role="alert"
-    >
-      <span className="font-medium">Reconciliation warning: </span>Revenue (
-      {formatCurrency(revenueTotal)}) does not match payments (
-      {formatCurrency(paymentsTotal)}). Difference: {formatCurrency(diff)}.
-    </div>
-  );
-}
+// ── FilePreview ────────────────────────────────────────────────────────────────
 
 function FilePreview({
   fileUrl,
@@ -236,6 +248,8 @@ function FilePreview({
     </div>
   );
 }
+
+// ── RoomStatRow ────────────────────────────────────────────────────────────────
 
 function RoomStatRow({
   fieldKey,
@@ -292,16 +306,151 @@ function RoomStatRow({
   );
 }
 
+// ── CategoryCombobox ───────────────────────────────────────────────────────────
+
+function CategoryCombobox({
+  categories,
+  selectedId,
+  onSelect,
+  inputLabel,
+}: {
+  categories: CategoryOption[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  inputLabel: string;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedName = useMemo(
+    () => categories.find((c) => c._id === selectedId)?.name ?? "",
+    [categories, selectedId]
+  );
+
+  const groups = useMemo(() => {
+    const lower = search.toLowerCase();
+    const filtered = categories.filter(
+      (cat) =>
+        cat.name.toLowerCase().includes(lower) ||
+        (cat.parentName?.toLowerCase().includes(lower) ?? false)
+    );
+    return buildCategoryGroups(filtered);
+  }, [categories, search]);
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      onSelect(id);
+      setSearch("");
+      setOpen(false);
+    },
+    [onSelect]
+  );
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handler = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="relative flex-1" ref={containerRef}>
+      <input
+        aria-autocomplete="list"
+        aria-controls="category-listbox"
+        aria-expanded={open}
+        aria-label={inputLabel}
+        className="h-7 w-full rounded border border-input bg-transparent px-2 text-xs outline-none focus-visible:ring-1 dark:bg-input/30"
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => {
+          setSearch("");
+          setOpen(true);
+        }}
+        placeholder={selectedName || "— Select or type to filter —"}
+        ref={inputRef}
+        role="combobox"
+        type="text"
+        value={open ? search : selectedName}
+      />
+      {open && (
+        <div
+          className="absolute top-8 left-0 z-50 max-h-64 w-full min-w-[220px] overflow-y-auto rounded border border-input bg-popover shadow-lg"
+          id="category-listbox"
+          role="listbox"
+        >
+          {groups.length === 0 ? (
+            <div className="px-2 py-3 text-center text-muted-foreground text-xs">
+              No categories found
+            </div>
+          ) : (
+            groups.map((group) => (
+              <div key={group.parentId ?? "__none__"}>
+                <div
+                  aria-hidden="true"
+                  className="px-2 pt-2 pb-0.5 font-medium text-muted-foreground text-xs uppercase tracking-wide"
+                >
+                  {group.parentName}
+                </div>
+                {group.children.map((cat) => (
+                  <div
+                    aria-selected={selectedId === cat._id}
+                    className={`cursor-pointer px-4 py-1.5 text-xs hover:bg-accent ${
+                      selectedId === cat._id ? "bg-accent/50 font-medium" : ""
+                    }`}
+                    key={cat._id}
+                    onClick={() => handleSelect(cat._id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSelect(cat._id);
+                      }
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    role="option"
+                    tabIndex={0}
+                  >
+                    {cat.name}
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── RevenueMappingRow ──────────────────────────────────────────────────────────
+
 function RevenueMappingRow({
   state,
+  index,
   categories,
   onCategoryChange,
   onToggleSkip,
+  onEditSourceLabel,
+  onEditAmount,
 }: {
   state: MappingState;
-  categories: Category[];
+  index: number;
+  categories: CategoryOption[];
   onCategoryChange: (categoryId: string | null) => void;
   onToggleSkip: () => void;
+  onEditSourceLabel?: (label: string) => void;
+  onEditAmount?: (val: string) => void;
 }) {
   const level = getConfidenceLevel(state.confidence, state.proposedCategoryId);
   const isResolved =
@@ -312,32 +461,55 @@ function RevenueMappingRow({
       className={`flex flex-wrap items-center gap-2 py-2 text-xs ${state.skipped ? "opacity-50" : ""}`}
     >
       <ConfidencePip level={isResolved ? "green" : level} />
-      <span className="w-36 shrink-0 truncate font-medium">
-        {state.sourceLabel}
-      </span>
-      <span className="w-24 shrink-0 text-right text-muted-foreground">
-        {formatCurrency(state.amount)}
-      </span>
-      {!state.skipped && (
-        <select
-          aria-label={`Revenue category for ${state.sourceLabel}`}
-          className="h-7 flex-1 rounded-none border border-input bg-transparent px-2 text-xs outline-none focus-visible:ring-1 dark:bg-input/30"
-          onChange={(e) =>
-            onCategoryChange(e.target.value === "" ? null : e.target.value)
-          }
-          value={state.selectedCategoryId ?? ""}
-        >
-          <option value="">— Select category —</option>
-          {categories.map((cat) => (
-            <option key={cat._id} value={cat._id}>
-              {cat.name}
-            </option>
-          ))}
-        </select>
+
+      {state.isManual ? (
+        <input
+          aria-label={`Revenue line ${index + 1} description`}
+          className="h-7 w-36 shrink-0 rounded border border-input bg-transparent px-2 text-xs outline-none focus-visible:ring-1 dark:bg-input/30"
+          onChange={(e) => onEditSourceLabel?.(e.target.value)}
+          placeholder="Description"
+          type="text"
+          value={state.sourceLabel}
+        />
+      ) : (
+        <span className="w-36 shrink-0 truncate font-medium">
+          {state.sourceLabel}
+        </span>
       )}
+
+      {state.isManual ? (
+        <input
+          aria-label={`Revenue line ${index + 1} amount`}
+          className="h-7 w-24 shrink-0 rounded border border-input bg-transparent px-2 text-right text-xs tabular-nums outline-none focus-visible:ring-1 dark:bg-input/30"
+          onChange={(e) => onEditAmount?.(e.target.value)}
+          placeholder="0.00"
+          step="any"
+          type="number"
+          value={state.amount === 0 ? "" : String(state.amount)}
+        />
+      ) : (
+        <span className="w-24 shrink-0 text-right text-muted-foreground">
+          {formatCurrency(state.amount)}
+        </span>
+      )}
+
+      {!state.skipped && (
+        <CategoryCombobox
+          categories={categories}
+          inputLabel={`Revenue category for ${state.sourceLabel || `line ${index + 1}`}`}
+          onSelect={onCategoryChange}
+          selectedId={state.selectedCategoryId}
+        />
+      )}
+
       <Button
         className="h-6 shrink-0 px-2 text-xs"
         onClick={onToggleSkip}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            onToggleSkip();
+          }
+        }}
         type="button"
         variant="ghost"
       >
@@ -347,22 +519,52 @@ function RevenueMappingRow({
   );
 }
 
+// ── PaymentRow ─────────────────────────────────────────────────────────────────
+
 function PaymentRow({
-  paymentType,
-  amount,
+  state,
+  onEditAmount,
+  onToggleSkip,
 }: {
-  paymentType: string;
-  amount: number;
+  state: PaymentState;
+  onEditAmount: (val: string) => void;
+  onToggleSkip: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between py-1 text-xs">
-      <span className="text-muted-foreground">{paymentType}</span>
-      <span className="font-medium tabular-nums">{formatCurrency(amount)}</span>
+    <div
+      className={`flex items-center gap-2 py-1 text-xs ${state.skipped ? "opacity-40" : ""}`}
+    >
+      <span className="flex-1 text-muted-foreground">{state.paymentType}</span>
+      {state.skipped ? (
+        <span className="text-muted-foreground text-xs italic">skipped</span>
+      ) : (
+        <input
+          aria-label={`Amount for ${state.paymentType}`}
+          className="h-7 w-28 rounded border border-input bg-transparent px-2 text-right text-xs tabular-nums outline-none focus-visible:ring-1 dark:bg-input/30"
+          onChange={(e) => onEditAmount(e.target.value)}
+          step="any"
+          type="number"
+          value={String(state.amount)}
+        />
+      )}
+      <Button
+        className="h-6 shrink-0 px-2 text-xs"
+        onClick={onToggleSkip}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            onToggleSkip();
+          }
+        }}
+        type="button"
+        variant="ghost"
+      >
+        {state.skipped ? "Undo" : "Skip"}
+      </Button>
     </div>
   );
 }
 
-// ── VerifyForm — receives loaded data, manages all form state ──────────────────
+// ── VerifyForm ─────────────────────────────────────────────────────────────────
 
 function VerifyForm({
   importId,
@@ -377,7 +579,6 @@ function VerifyForm({
   const { dataImport, extractionResult, property, categories, fileUrl } =
     verifyData;
 
-  // Build field map once from the loaded data (stable across renders).
   const extractedFieldMap = useMemo(() => {
     const map: Record<
       string,
@@ -389,9 +590,10 @@ function VerifyForm({
     return map;
   }, [extractionResult.extractedFields]);
 
-  // ── local state (initialized from loaded data) ───────────────────────────────
+  // ── state ────────────────────────────────────────────────────────────────────
 
   const [auditDate, setAuditDate] = useState(extractionResult.auditDate ?? "");
+  const [skipRoomStats, setSkipRoomStats] = useState(false);
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -426,55 +628,59 @@ function VerifyForm({
           ? m.proposedCategoryId
           : null,
       skipped: false,
+      isManual: false,
     }))
   );
 
-  const [overwriteConfirmed, setOverwriteConfirmed] = useState(false);
-  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [paymentStates, setPaymentStates] = useState<PaymentState[]>(() =>
+    extractionResult.payments.map((p) => ({
+      paymentType: p.paymentType,
+      amount: p.amount,
+      skipped: false,
+    }))
+  );
+
   const [submitting, setSubmitting] = useState(false);
 
-  // ── derived values ───────────────────────────────────────────────────────────
+  // ── derived ──────────────────────────────────────────────────────────────────
 
   const dateWarning = auditDate ? getDateWarning(auditDate) : null;
   const dateValid = ISO_DATE_REGEX.test(auditDate);
 
-  const payments = extractionResult.payments;
-  const paymentsTotal = payments.reduce((sum, p) => sum + p.amount, 0);
-
-  const roomRevenue = useMemo(() => {
-    const rooms = Number(fieldValues.roomsOccupied);
-    const adr = Number(fieldValues.adr);
-    return Number.isNaN(rooms) || Number.isNaN(adr) ? 0 : rooms * adr;
-  }, [fieldValues.roomsOccupied, fieldValues.adr]);
-
-  const nonRoomRevenue = useMemo(
+  const paymentsTotal = useMemo(
     () =>
-      mappingStates
-        .filter((m) => !m.skipped && m.selectedCategoryId !== null)
-        .reduce((sum, m) => sum + m.amount, 0),
-    [mappingStates]
+      paymentStates
+        .filter((p) => !p.skipped)
+        .reduce((sum, p) => sum + p.amount, 0),
+    [paymentStates]
   );
 
-  const revenueTotal = roomRevenue + nonRoomRevenue;
+  const allFieldsResolved =
+    skipRoomStats ||
+    FIELD_ORDER.every((key) => {
+      const f = extractedFieldMap[key];
+      const level = getConfidenceLevel(f?.confidence ?? 0, f?.value ?? null);
+      if (level === "red") {
+        return fieldValues[key] !== "";
+      }
+      if (level === "yellow") {
+        return fieldConfirmed[key] === true;
+      }
+      return true;
+    });
 
-  const allFieldsResolved = FIELD_ORDER.every((key) => {
-    const f = extractedFieldMap[key];
-    const level = getConfidenceLevel(f?.confidence ?? 0, f?.value ?? null);
-    if (level === "red") {
-      return fieldValues[key] !== "";
+  const allMappingsResolved = mappingStates.every((m) => {
+    if (m.skipped) {
+      return true;
     }
-    if (level === "yellow") {
-      return fieldConfirmed[key] === true;
+    if (m.isManual) {
+      return m.sourceLabel.trim() !== "" && m.selectedCategoryId !== null;
     }
-    return true;
-  });
-
-  const allMappingsResolved = mappingStates.every(
-    (m) =>
-      m.skipped ||
+    return (
       getConfidenceLevel(m.confidence, m.proposedCategoryId) === "green" ||
       m.selectedCategoryId !== null
-  );
+    );
+  });
 
   const canSubmit =
     dateValid && allFieldsResolved && allMappingsResolved && !submitting;
@@ -511,13 +717,54 @@ function VerifyForm({
     );
   }, []);
 
+  const handleEditManualSourceLabel = useCallback(
+    (index: number, label: string) => {
+      setMappingStates((prev) =>
+        prev.map((m, i) => (i === index ? { ...m, sourceLabel: label } : m))
+      );
+    },
+    []
+  );
+
+  const handleEditManualAmount = useCallback((index: number, val: string) => {
+    setMappingStates((prev) =>
+      prev.map((m, i) => (i === index ? { ...m, amount: Number(val) || 0 } : m))
+    );
+  }, []);
+
+  const handleAddManualLine = useCallback(() => {
+    setMappingStates((prev) => [
+      ...prev,
+      {
+        sourceLabel: "",
+        amount: 0,
+        confidence: 1,
+        proposedCategoryId: null,
+        selectedCategoryId: null,
+        skipped: false,
+        isManual: true,
+      },
+    ]);
+  }, []);
+
+  const handleEditPaymentAmount = useCallback((index: number, val: string) => {
+    setPaymentStates((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, amount: Number(val) || 0 } : p))
+    );
+  }, []);
+
+  const handleToggleSkipPayment = useCallback((index: number) => {
+    setPaymentStates((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, skipped: !p.skipped } : p))
+    );
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) {
       return;
     }
 
     setSubmitting(true);
-    setDuplicateWarning(null);
 
     const resolvedFields = {
       roomsOccupied: Number(fieldValues.roomsOccupied) || 0,
@@ -537,26 +784,24 @@ function VerifyForm({
         amount: m.amount,
       }));
 
+    const resolvedPayments = paymentStates
+      .filter((p) => !p.skipped)
+      .map((p) => ({ paymentType: p.paymentType, amount: p.amount }));
+
     try {
       await confirmVerify({
         importId,
         auditDate,
-        overwriteConfirmed: overwriteConfirmed || undefined,
+        skipRoomStats: skipRoomStats || undefined,
         resolvedFields,
         resolvedMappings,
+        resolvedPayments,
       });
 
       toast.success("Audit data saved successfully.");
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      if (raw.startsWith("DUPLICATE_AUDIT_DATE:")) {
-        setDuplicateWarning(
-          `An audit record already exists for ${auditDate}. Check the box below to overwrite it.`
-        );
-        setSubmitting(false);
-        return;
-      }
       toast.error(raw);
     } finally {
       setSubmitting(false);
@@ -565,8 +810,9 @@ function VerifyForm({
     canSubmit,
     fieldValues,
     mappingStates,
+    paymentStates,
     auditDate,
-    overwriteConfirmed,
+    skipRoomStats,
     confirmVerify,
     importId,
     navigate,
@@ -657,67 +903,102 @@ function VerifyForm({
           {/* Room Statistics */}
           <Card>
             <CardHeader className="pt-4 pb-2">
-              <CardTitle className="text-sm">Room Statistics</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-4">
-              <SectionHeading>Fields</SectionHeading>
-              {FIELD_ORDER.map((key) => {
-                const f = extractedFieldMap[key] ?? {
-                  value: null,
-                  confidence: 0,
-                };
-                return (
-                  <RoomStatRow
-                    confirmed={fieldConfirmed[key] ?? false}
-                    editValue={fieldValues[key] ?? ""}
-                    fieldKey={key}
-                    key={key}
-                    onConfirm={() => handleConfirmField(key)}
-                    onEdit={(val) => handleEditField(key, val)}
-                    originalConfidence={f.confidence}
-                    originalValue={f.value}
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Room Statistics</CardTitle>
+                <label className="flex cursor-pointer items-center gap-2 text-muted-foreground text-xs">
+                  <input
+                    checked={skipRoomStats}
+                    className="rounded"
+                    onChange={(e) => setSkipRoomStats(e.target.checked)}
+                    type="checkbox"
                   />
-                );
-              })}
-            </CardContent>
+                  Not in this report
+                </label>
+              </div>
+            </CardHeader>
+            {!skipRoomStats && (
+              <CardContent className="pb-4">
+                <SectionHeading>Fields</SectionHeading>
+                {FIELD_ORDER.map((key) => {
+                  const f = extractedFieldMap[key] ?? {
+                    value: null,
+                    confidence: 0,
+                  };
+                  return (
+                    <RoomStatRow
+                      confirmed={fieldConfirmed[key] ?? false}
+                      editValue={fieldValues[key] ?? ""}
+                      fieldKey={key}
+                      key={key}
+                      onConfirm={() => handleConfirmField(key)}
+                      onEdit={(val) => handleEditField(key, val)}
+                      originalConfidence={f.confidence}
+                      originalValue={f.value}
+                    />
+                  );
+                })}
+              </CardContent>
+            )}
           </Card>
 
           {/* Non-Room Revenue */}
-          {mappingStates.length > 0 && (
-            <Card>
-              <CardHeader className="pt-4 pb-2">
-                <CardTitle className="text-sm">Non-Room Revenue</CardTitle>
-              </CardHeader>
-              <CardContent className="pb-4">
-                <SectionHeading>
-                  Assign a revenue category to each line
-                </SectionHeading>
-                {mappingStates.map((m, i) => (
-                  <RevenueMappingRow
-                    categories={categories}
-                    key={m.sourceLabel}
-                    onCategoryChange={(catId) => handleCategoryChange(i, catId)}
-                    onToggleSkip={() => handleToggleSkip(i)}
-                    state={m}
-                  />
-                ))}
-              </CardContent>
-            </Card>
-          )}
+          <Card>
+            <CardHeader className="pt-4 pb-2">
+              <CardTitle className="text-sm">Non-Room Revenue</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-4">
+              {mappingStates.length > 0 && (
+                <>
+                  <SectionHeading>
+                    Assign a revenue category to each line
+                  </SectionHeading>
+                  {mappingStates.map((m, i) => (
+                    <RevenueMappingRow
+                      categories={categories}
+                      index={i}
+                      key={m.isManual ? `manual-${i}` : m.sourceLabel}
+                      onCategoryChange={(catId) =>
+                        handleCategoryChange(i, catId)
+                      }
+                      onEditAmount={(val) => handleEditManualAmount(i, val)}
+                      onEditSourceLabel={(label) =>
+                        handleEditManualSourceLabel(i, label)
+                      }
+                      onToggleSkip={() => handleToggleSkip(i)}
+                      state={m}
+                    />
+                  ))}
+                </>
+              )}
+              <button
+                className="mt-2 flex items-center gap-1 text-primary text-xs hover:underline"
+                onClick={handleAddManualLine}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    handleAddManualLine();
+                  }
+                }}
+                type="button"
+              >
+                + Add line
+              </button>
+            </CardContent>
+          </Card>
 
           {/* Payments */}
-          {payments.length > 0 && (
+          {paymentStates.length > 0 && (
             <Card>
               <CardHeader className="pt-4 pb-2">
                 <CardTitle className="text-sm">Payments</CardTitle>
               </CardHeader>
               <CardContent className="pb-4">
                 <SectionHeading>Payment breakdown</SectionHeading>
-                {payments.map((p) => (
+                {paymentStates.map((p, i) => (
                   <PaymentRow
-                    amount={p.amount}
                     key={p.paymentType}
-                    paymentType={p.paymentType}
+                    onEditAmount={(val) => handleEditPaymentAmount(i, val)}
+                    onToggleSkip={() => handleToggleSkipPayment(i)}
+                    state={p}
                   />
                 ))}
                 <div className="mt-2 flex justify-between border-t pt-2 font-medium text-xs">
@@ -730,43 +1011,12 @@ function VerifyForm({
             </Card>
           )}
 
-          {/* Reconciliation warning */}
-          <ReconciliationBanner
-            paymentsTotal={paymentsTotal}
-            revenueTotal={revenueTotal}
-          />
-
-          {/* Duplicate overwrite confirmation */}
-          {duplicateWarning && (
-            <div
-              className="rounded border border-destructive/50 bg-destructive/10 px-3 py-2 text-destructive text-sm"
-              role="alert"
-            >
-              <p className="font-medium">{duplicateWarning}</p>
-              <label className="mt-2 flex items-center gap-2 text-xs">
-                <input
-                  checked={overwriteConfirmed}
-                  className="rounded"
-                  onChange={(e) => setOverwriteConfirmed(e.target.checked)}
-                  type="checkbox"
-                />
-                Yes, overwrite the existing record for {auditDate}
-              </label>
-            </div>
-          )}
-
           {/* Actions */}
           <div className="flex justify-end gap-2 pb-6">
             <Button asChild type="button" variant="outline">
               <Link to="/dashboard">Cancel</Link>
             </Button>
-            <Button
-              disabled={
-                !canSubmit || (duplicateWarning !== null && !overwriteConfirmed)
-              }
-              onClick={handleSubmit}
-              type="button"
-            >
+            <Button disabled={!canSubmit} onClick={handleSubmit} type="button">
               {submitting ? "Saving…" : "Save verified data"}
             </Button>
           </div>
@@ -776,7 +1026,7 @@ function VerifyForm({
   );
 }
 
-// ── VerifyPage — query loader wrapper ─────────────────────────────────────────
+// ── VerifyPage ─────────────────────────────────────────────────────────────────
 
 function VerifyPage() {
   const { importId } = Route.useParams();

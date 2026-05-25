@@ -22,13 +22,49 @@ export const getVerifyData = query({
 
     const property = await ctx.db.get(dataImport.propertyId);
 
-    const categories = await ctx.db
+    // Fetch parent categories so the UI can group children under their parent.
+    const parentCategories = await ctx.db
+      .query("revenueParentCategories")
+      .withIndex("by_propertyId", (q) =>
+        q.eq("propertyId", dataImport.propertyId)
+      )
+      .filter((q) => q.eq(q.field("archivedAt"), undefined))
+      .collect();
+
+    const parentById = new Map(
+      parentCategories.map((p) => [
+        p._id as string,
+        { name: p.name, displayOrder: p.displayOrder },
+      ])
+    );
+
+    const rawCategories = await ctx.db
       .query("revenueCategories")
       .withIndex("by_propertyId", (q) =>
         q.eq("propertyId", dataImport.propertyId)
       )
       .filter((q) => q.eq(q.field("archivedAt"), undefined))
       .collect();
+
+    const categories = rawCategories
+      .map((cat) => {
+        const parent = cat.parentId
+          ? parentById.get(cat.parentId as string)
+          : undefined;
+        return {
+          _id: cat._id,
+          name: cat.name,
+          displayOrder: cat.displayOrder,
+          parentId: cat.parentId ?? null,
+          parentName: parent?.name ?? null,
+          parentDisplayOrder: parent?.displayOrder ?? 999,
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.parentDisplayOrder - b.parentDisplayOrder ||
+          a.displayOrder - b.displayOrder
+      );
 
     // Generate a temporary signed URL for the file preview (null if file deleted).
     const fileUrl = dataImport.storageId

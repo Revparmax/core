@@ -137,24 +137,30 @@ export const recordUpload = mutation({
 
 // ── confirmVerify ──────────────────────────────────────────────────────────────
 //
-// Atomically writes auditRecord + roomStatistics + nonRoomRevenue + paymentRecords
-// + paceSnapshots once the user has reviewed and approved the extracted data.
+// Records this import's contribution to the audit day for (propertyId, auditDate).
+// The auditRecord is found-or-created so multiple uploads can contribute different
+// segments to the same day (e.g. rooms report + F&B closing report).
+//
+// Sub-record write semantics:
+//  - roomStatistics : one per audit day — inserted first time, patched on repeat
+//                     (last-write-wins; two reports should not both provide rooms)
+//  - nonRoomRevenue : additive — each upload appends its revenue lines
+//  - paymentRecords : additive — each upload appends its payment lines
+//  - paceSnapshots  : additive independent time-series (unchanged)
+//
+// All sub-records carry importId + sourceType for full provenance.
+// Future API/manual sources write directly to sub-record tables with
+// sourceType "api"|"manual" and no importId.
 //
 // Guards:
-//  - IN-001: validates each categoryId is a real revenueCategories doc
-//  - IN-012: patches (not replaces) extractorProfiles.mappings to avoid
-//            clobbering concurrent verify sessions
+//  - IN-001: validates each categoryId belongs to this property
+//  - IN-012: patches (not replaces) extractorProfiles.mappings
 //  - IN-017: ISO-8601 date format validation
-//  - ECH PRD:99: (propertyId, auditDate) uniqueness — requires overwrite_confirmed
-//  - ECH PRD:214: on overwrite, schedules forecast cache invalidation
 export const confirmVerify = mutation({
   args: {
     importId: v.id("dataImports"),
-    // User-confirmed or user-corrected audit date.
     auditDate: v.string(),
-    // Whether the user explicitly acknowledged overwriting a prior submission.
-    overwriteConfirmed: v.optional(v.boolean()),
-    // Resolved room statistics (all 6 required fields).
+    skipRoomStats: v.optional(v.boolean()),
     resolvedFields: v.object({
       roomsOccupied: v.number(),
       adr: v.number(),
@@ -163,12 +169,17 @@ export const confirmVerify = mutation({
       compRooms: v.number(),
       oooRooms: v.number(),
     }),
-    // Non-room revenue lines confirmed by user.
     // categoryId null → user chose to skip this line.
     resolvedMappings: v.array(
       v.object({
         sourceLabel: v.string(),
         categoryId: v.union(v.id("revenueCategories"), v.null()),
+        amount: v.number(),
+      })
+    ),
+    resolvedPayments: v.array(
+      v.object({
+        paymentType: v.string(),
         amount: v.number(),
       })
     ),
@@ -216,62 +227,69 @@ export const confirmVerify = mutation({
       })
     );
 
-    // ── duplicate date guard (ECH PRD:99) ─────────────────────────────────────
+    // ── load property ──────────────────────────────────────────────────────────
 
-    const existing = await ctx.db
+    const property = await ctx.db.get(dataImport.propertyId);
+    if (!property) {
+      throw new ConvexError("Property not found");
+    }
+
+    // ── find-or-create auditRecord for (propertyId, auditDate) ────────────────
+
+    const existingAudit = await ctx.db
       .query("auditRecords")
       .withIndex("by_propertyId_date", (q) =>
         q
           .eq("propertyId", dataImport.propertyId)
           .eq("auditDate", args.auditDate)
       )
+      .filter((q) => q.neq(q.field("status"), "overwritten"))
       .first();
 
-    if (existing && !args.overwriteConfirmed) {
-      // Surface enough context for the UI to build a human-readable warning.
-      throw new ConvexError(
-        `DUPLICATE_AUDIT_DATE:${JSON.stringify({
-          existingId: existing._id,
-          submittedBy: existing.submittedBy,
-          verifiedAt: existing.verifiedAt ?? null,
-        })}`
-      );
+    const auditId = existingAudit
+      ? existingAudit._id
+      : await ctx.db.insert("auditRecords", {
+          propertyId: dataImport.propertyId,
+          companyId: dataImport.companyId,
+          auditDate: args.auditDate,
+          source: "upload",
+          status: "verified",
+          dataImportId: args.importId,
+          submittedBy: userId,
+          verifiedBy: userId,
+          verifiedAt: Date.now(),
+        });
+
+    // ── roomStatistics — last-write-wins (omitted when skipRoomStats=true) ────
+
+    if (!args.skipRoomStats) {
+      const roomStatsPayload = {
+        auditId,
+        propertyId: dataImport.propertyId,
+        totalRooms: property.totalRooms,
+        roomsOccupied: args.resolvedFields.roomsOccupied,
+        adr: args.resolvedFields.adr,
+        sameDayCancellations: args.resolvedFields.sameDayCancellations,
+        noShows: args.resolvedFields.noShows,
+        compRooms: args.resolvedFields.compRooms,
+        oooRooms: args.resolvedFields.oooRooms,
+        importId: args.importId,
+        sourceType: "upload" as const,
+      };
+
+      const existingRoomStats = await ctx.db
+        .query("roomStatistics")
+        .withIndex("by_auditId", (q) => q.eq("auditId", auditId))
+        .first();
+
+      if (existingRoomStats) {
+        await ctx.db.patch(existingRoomStats._id, roomStatsPayload);
+      } else {
+        await ctx.db.insert("roomStatistics", roomStatsPayload);
+      }
     }
 
-    if (existing) {
-      // Mark prior record as overwritten (ECH PRD:214).
-      await ctx.db.patch(existing._id, { status: "overwritten" });
-      // TODO: schedule forecast cache invalidation for this date.
-    }
-
-    // ── write auditRecord ──────────────────────────────────────────────────────
-
-    const auditId = await ctx.db.insert("auditRecords", {
-      propertyId: dataImport.propertyId,
-      companyId: dataImport.companyId,
-      auditDate: args.auditDate,
-      source: "upload",
-      status: "verified",
-      dataImportId: args.importId,
-      submittedBy: userId,
-      verifiedBy: userId,
-      verifiedAt: Date.now(),
-    });
-
-    // ── write roomStatistics ───────────────────────────────────────────────────
-
-    await ctx.db.insert("roomStatistics", {
-      auditId,
-      propertyId: dataImport.propertyId,
-      roomsOccupied: args.resolvedFields.roomsOccupied,
-      adr: args.resolvedFields.adr,
-      sameDayCancellations: args.resolvedFields.sameDayCancellations,
-      noShows: args.resolvedFields.noShows,
-      compRooms: args.resolvedFields.compRooms,
-      oooRooms: args.resolvedFields.oooRooms,
-    });
-
-    // ── write nonRoomRevenue (skip lines with no category) ────────────────────
+    // ── nonRoomRevenue — additive ─────────────────────────────────────────────
 
     await Promise.all(
       args.resolvedMappings
@@ -283,13 +301,14 @@ export const confirmVerify = mutation({
             categoryId: m.categoryId as Id<"revenueCategories">,
             amount: m.amount,
             source: m.sourceLabel,
+            importId: args.importId,
+            sourceType: "upload" as const,
           })
         )
     );
 
-    // ── write paymentRecords (find-or-create payment types) ───────────────────
+    // ── paymentRecords — additive (find-or-create payment types) ─────────────
 
-    // Load all existing payment types for this property + global defaults at once.
     const [propertyPaymentTypes, globalPaymentTypes] = await Promise.all([
       ctx.db
         .query("paymentTypes")
@@ -305,25 +324,21 @@ export const confirmVerify = mutation({
         .collect(),
     ]);
 
-    const allPaymentTypes = [...propertyPaymentTypes, ...globalPaymentTypes];
-
-    // Build name → id lookup (case-insensitive).
     const paymentTypeByName = new Map<string, Id<"paymentTypes">>(
-      allPaymentTypes.map((pt) => [pt.name.toLowerCase(), pt._id])
+      [...propertyPaymentTypes, ...globalPaymentTypes].map((pt) => [
+        pt.name.toLowerCase(),
+        pt._id,
+      ])
     );
 
-    // Find unique names that don't yet exist and create them in parallel.
     const uniqueNames = [
-      ...new Set(
-        extractionResult.payments.map((p) => p.paymentType.toLowerCase())
-      ),
+      ...new Set(args.resolvedPayments.map((p) => p.paymentType.toLowerCase())),
     ].filter((n) => !paymentTypeByName.has(n));
 
     const createdIds = await Promise.all(
       uniqueNames.map(async (lowerName) => {
-        // Preserve the original casing from the first occurrence.
         const originalName =
-          extractionResult.payments.find(
+          args.resolvedPayments.find(
             (p) => p.paymentType.toLowerCase() === lowerName
           )?.paymentType ?? lowerName;
         const newId = await ctx.db.insert("paymentTypes", {
@@ -339,9 +354,8 @@ export const confirmVerify = mutation({
       paymentTypeByName.set(name, id);
     }
 
-    // Insert payment records in parallel.
     await Promise.all(
-      extractionResult.payments.map((payment) => {
+      args.resolvedPayments.map((payment) => {
         const typeId = paymentTypeByName.get(payment.paymentType.toLowerCase());
         if (!typeId) {
           throw new ConvexError(
@@ -354,11 +368,13 @@ export const confirmVerify = mutation({
           paymentTypeId: typeId,
           amount: payment.amount,
           source: "upload",
+          importId: args.importId,
+          sourceType: "upload" as const,
         });
       })
     );
 
-    // ── write paceSnapshots (snapshotDate = auditDate) ────────────────────────
+    // ── paceSnapshots — additive independent time-series ─────────────────────
 
     await Promise.all(
       extractionResult.paceSnapshot.map((snap) =>
@@ -374,8 +390,7 @@ export const confirmVerify = mutation({
       )
     );
 
-    // ── patch extractorProfiles.mappings (IN-012) ──────────────────────────────
-    // Use patch not replace to avoid clobbering concurrent verify sessions.
+    // ── patch extractorProfiles.mappings (IN-012) ─────────────────────────────
 
     const newMappings = args.resolvedMappings
       .filter((m) => m.categoryId !== null)
@@ -408,12 +423,11 @@ export const confirmVerify = mutation({
 
     // ── mark property active on first verified submission ─────────────────────
 
-    const property = await ctx.db.get(dataImport.propertyId);
-    if (property?.status === "pending_first_upload") {
+    if (property.status === "pending_first_upload") {
       await ctx.db.patch(dataImport.propertyId, { status: "active" });
     }
 
-    // ── mark extraction result as verified ─────────────────────────────────────
+    // ── mark extraction result as verified ────────────────────────────────────
 
     await ctx.db.patch(extractionResult._id, { status: "verified" });
 

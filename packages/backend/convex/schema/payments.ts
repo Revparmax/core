@@ -15,5 +15,11 @@ export const paymentRecords = defineTable({
   propertyId: v.id("properties"),
   paymentTypeId: v.id("paymentTypes"),
   amount: v.number(),
-  source: v.string(),
+  source: v.string(), // raw label from the source file/system
+  importId: v.optional(v.id("dataImports")), // null for api/manual sources
+  sourceType: v.union(
+    v.literal("upload"),
+    v.literal("api"),
+    v.literal("manual")
+  ),
 }).index("by_auditId", ["auditId"]);
