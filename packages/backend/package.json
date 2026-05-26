@@ -6,7 +6,8 @@
   "author": "",
   "scripts": {
     "dev": "convex dev",
-    "dev:setup": "convex dev --configure --until-success"
+    "dev:setup": "convex dev --configure --until-success",
+    "parse:sample-files": "bun scripts/parse-sample-files.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.0",
