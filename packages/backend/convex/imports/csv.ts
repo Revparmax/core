@@ -54,50 +54,6 @@ export const parseCsvRows = (content: string): string[][] => {
   return rows;
 };
 
-export const splitCsvTables = (rows: string[][]): CsvTable[] => {
-  const tables: CsvTable[] = [];
-  let currentHeader: string[] | undefined;
-  let currentRows: string[][] = [];
-
-  const flush = () => {
-    if (currentHeader && currentRows.length > 0) {
-      tables.push({ header: currentHeader, rows: currentRows });
-    }
-    currentHeader = undefined;
-    currentRows = [];
-  };
-
-  for (const row of rows) {
-    const hasCells = row.some((cell) => cell.trim() !== "");
-    if (!hasCells) {
-      flush();
-      continue;
-    }
-
-    const normalized = row.map(normalizeHeader);
-    const looksLikeHeader =
-      normalized.includes("date") ||
-      normalized.includes("description") ||
-      normalized.includes("charge_type") ||
-      normalized.includes("confirmation_number") ||
-      normalized.includes("group_name") ||
-      normalized.includes("room_number") ||
-      normalized.includes("account_type");
-
-    if (!currentHeader || looksLikeHeader) {
-      flush();
-      currentHeader = row;
-      currentRows = [];
-      continue;
-    }
-
-    currentRows.push(row);
-  }
-
-  flush();
-  return tables;
-};
-
 export const rowToObject = (
   header: string[],
   row: string[]

@@ -1,4 +1,4 @@
-import { hasColumns, parseCsvRows, rowToObject, splitCsvTables } from "../csv";
+import { hasColumns, parseCsvRows, rowToObject } from "../csv";
 import type {
   IdentifiedReport,
   ImportAttachment,
@@ -14,6 +14,7 @@ import {
   parseNumber,
   parsePmsDate,
 } from "../utils";
+import { splitPepCsvTables } from "./csvTables";
 
 export const PEP_DEFAULT_PROFILE: ParserProfile = {
   id: "pep.default",
@@ -162,7 +163,7 @@ export const parsePepReport = (
   identified: IdentifiedReport
 ): ParsedHotelReport => {
   const rows = parseCsvRows(attachment.content);
-  const tables = splitCsvTables(rows);
+  const tables = splitPepCsvTables(rows);
   const warnings: string[] = [];
 
   const base: ParsedHotelReport = {
@@ -213,7 +214,7 @@ const actualToday = (row: Record<string, string>): string =>
   row.actual_today ?? row.amount ?? "";
 
 const parseHotelStatisticsTables = (
-  tables: ReturnType<typeof splitCsvTables>,
+  tables: ReturnType<typeof splitPepCsvTables>,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   const roomStatistics: NonNullable<ParsedHotelReport["roomStatistics"]> = {};
@@ -345,7 +346,7 @@ const extractRevenueRows = (
     }));
 
 const parseOccupancyForecastTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -378,7 +379,7 @@ const parseOccupancyForecastTable = (
 };
 
 const parseMarketSegmentTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -411,7 +412,7 @@ const parseMarketSegmentTable = (
 };
 
 const parseRoomAvailabilityTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -439,7 +440,7 @@ const parseRoomAvailabilityTable = (
 };
 
 const parseBookedReservationsTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -473,7 +474,7 @@ const parseBookedReservationsTable = (
 };
 
 const parseCancelledReservationsTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -503,7 +504,7 @@ const parseCancelledReservationsTable = (
 };
 
 const parseGroupReservationsTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -532,7 +533,7 @@ const parseGroupReservationsTable = (
 };
 
 const parseFinalAuditTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
@@ -552,7 +553,7 @@ const parseFinalAuditTable = (
 };
 
 const parsePaymentTransactionsTable = (
-  table: ReturnType<typeof splitCsvTables>[number] | undefined,
+  table: ReturnType<typeof splitPepCsvTables>[number] | undefined,
   warnings: string[]
 ): Partial<ParsedHotelReport> => {
   if (!table) {
