@@ -189,15 +189,45 @@ const parseManagerReport = (
   return { revenue, roomStatistics };
 };
 
+// Seeded from legacy revenue_category_extcodes for company 4/source opera.
+// Replace this with Convex-backed property/PMS mappings before production ingest.
 const TRIAL_BALANCE_REVENUE_CATEGORIES: Record<string, string> = {
   "1000": "ROOMS REVENUE",
   "1005": "ROOMS REVENUE",
   "1010": "ROOMS REVENUE",
+  "1305": "ROOM REBATE",
+  "4001": "FOOD",
+  "4061": "BEVERAGES",
+  "4242": "ROOM RENTAL",
+  "4243": "EQUIPMENT RENTAL",
+  "4246": "MISC.",
+  "4251": "SERVICE CHARGE",
+  "4501": "PHONE",
+  "4507": "FAX & PHOTOCOPY",
+  "4511": "PAY PER VIEW MOVIES",
+  "4551": "PHONE",
+  "4554": "COIN LAUNDRY",
+  "4559": "MISC.",
+  "4562": "MISC.",
+  "4563": "MISC.",
+  "4600": "MISC.",
   "4601": "MISC.",
+  "4651": "MISC.",
+  "4752": "MISC.",
+  "4753": "MISC.",
+  "5000": "LAUNDRY/VALET",
+  "5005": "MISC.",
+  "5050": "LAUNDRY/VALET",
   "5106": "MARKET",
   "5108": "MARKET",
+  "5110": "MISC.",
+  "5160": "MISC.",
+  "5201": "MISC.",
+  "5560": "PARKING",
 };
 
+// Seeded from legacy payment_type_extcodes for company 4/source opera, plus
+// 9019 observed in current HIEX Trial Balance XML fixtures.
 const TRIAL_BALANCE_PAYMENT_TYPES: Record<string, string> = {
   "9000": "CASH",
   "9001": "CHECK",
@@ -205,8 +235,13 @@ const TRIAL_BALANCE_PAYMENT_TYPES: Record<string, string> = {
   "9003": "AMEX",
   "9004": "VISA",
   "9005": "MASTERCARD",
+  "9006": "DINERS",
   "9007": "DISCOVER",
+  "9011": "INTERAC",
+  "9013": "INTERAC",
   "9019": "INTERAC",
+  "9100": "A/R PAYMENT",
+  "9101": "A/R PAYMENT",
 };
 
 const aggregateAmount = (
