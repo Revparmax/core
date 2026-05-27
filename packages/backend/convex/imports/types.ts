@@ -54,11 +54,14 @@ export interface ParsedReportBase {
 export interface RoomStatisticSnapshot {
   adr?: number;
   compRooms?: number;
+  dayUseRooms?: number;
+  earlyDepartureRooms?: number;
   noShows?: number;
   oooRooms?: number;
   roomsOccupied?: number;
   sameDayCancellations?: number;
   totalRooms?: number;
+  walkIns?: number;
 }
 
 export interface RevenueLine {

@@ -112,11 +112,12 @@ export const parseOperaReport = (
       return { ...base, ...parseManagerReport(attachment.content, warnings) };
     case "HISTORY_FORECAST":
     case "RESERVATION_PACE":
-    case "BUSINESS_ON_THE_BOOKS":
       return {
         ...base,
         ...parseHistoryForecast(attachment.content, identified.signature),
       };
+    case "BUSINESS_ON_THE_BOOKS":
+      return { ...base, ...parseBusinessOnTheBooks(attachment.content) };
     case "RES_STATISTICS1":
     case "RES_FORECAST1":
       return { ...base, ...parseMarketSegments(attachment.content, warnings) };
@@ -170,11 +171,13 @@ const parseManagerReport = (
   const roomStatistics = {
     adr: metricValues.get("ADR_ROOM"),
     compRooms: metricValues.get("COMP_ROOMS"),
+    earlyDepartureRooms: metricValues.get("EARLY_DEP_ROOMS"),
     noShows: metricValues.get("NOSHOW_ROOMS"),
     oooRooms: metricValues.get("OOO_ROOMS"),
     roomsOccupied: metricValues.get("OCC_ROOMS"),
     sameDayCancellations: metricValues.get("CANCELLATIONS_MADE_TODAY"),
     totalRooms: metricValues.get("PHYSICAL_ROOMS"),
+    walkIns: metricValues.get("WALKIN_ROOMS"),
   };
 
   if (!roomStatistics.roomsOccupied) {
@@ -190,10 +193,12 @@ const parseHistoryForecast = (
 ): Partial<ParsedHotelReport> => {
   if (signature === "RESERVATION_PACE") {
     const paceSnapshots = blocksForTag(xml, "G_STAY_DATE").map((block) => {
-      const totalRevenue = parseCurrency(textForTag(block, "to_rev_ind"));
+      const totalRevenue =
+        parseCurrency(textForTag(block, "to_rev_ind")) +
+        parseCurrency(textForTag(block, "TO_ROOM_REVENUE_BLK"));
       const roomsOnBooks =
         parseNumber(textForTag(block, "TO_STAY_ROOMS_IND")) +
-        parseNumber(textForTag(block, "TO_STAY_ROOMS_GRP"));
+        parseNumber(textForTag(block, "TO_STAY_ROOMS_BLK"));
       return {
         adr: calculateAdr(totalRevenue, roomsOnBooks),
         availableRooms: parseNumber(textForTag(block, "TO_AVAIL")),
@@ -224,6 +229,45 @@ const parseHistoryForecast = (
       departures: parseNumber(textForTag(block, "DEPARTURE_ROOMS")),
       forecastDate: parsePmsDate(textForTag(block, "CONSIDERED_DATE")) ?? "",
       roomsOnBooks,
+      totalRevenue,
+    };
+  });
+
+  return {
+    auditDate: paceSnapshots[0]?.forecastDate,
+    paceSnapshots,
+  };
+};
+
+const parseBusinessOnTheBooks = (xml: string): Partial<ParsedHotelReport> => {
+  const paceSnapshots = blocksForTag(xml, "G_CONSIDERED_DATE").map((block) => {
+    let availableRooms: number | undefined;
+    let totalRooms = 0;
+    let totalRevenue = 0;
+
+    for (const sortBlock of blocksForTag(block, "G_SORT_COLUMN")) {
+      const columnCode = textForTag(sortBlock, "COLUMN_CODE");
+      const dayBlock = blocksForTag(sortBlock, "G_DAY")[0] ?? "";
+      const resortRooms = parseNumber(textForTag(dayBlock, "CF_RESORT_ROOMS"));
+      const outOfOrderRooms = parseNumber(textForTag(dayBlock, "CF_OOO_ROOMS"));
+
+      if (columnCode === "INDRES" || columnCode === "BLKRES") {
+        totalRooms += parseNumber(textForTag(dayBlock, "ROOMS"));
+        totalRevenue +=
+          parseCurrency(textForTag(dayBlock, "REVENUE_INDIVIDUALS")) +
+          parseCurrency(textForTag(dayBlock, "REVENUE_GROUPS"));
+      }
+
+      if (resortRooms > 0) {
+        availableRooms = resortRooms - outOfOrderRooms - totalRooms;
+      }
+    }
+
+    return {
+      adr: calculateAdr(totalRevenue, totalRooms),
+      availableRooms,
+      forecastDate: parsePmsDate(textForTag(block, "CONSIDERED_DATE")) ?? "",
+      roomsOnBooks: totalRooms,
       totalRevenue,
     };
   });
