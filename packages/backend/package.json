@@ -10,6 +10,7 @@
     "parse:sample-files": "bun scripts/parse-sample-files.ts",
     "parse:sample-files:json": "bun scripts/export-sample-parse-output.ts",
     "parse:sample-files:legacy:opera": "bun scripts/compare-opera-sample-to-legacy.ts",
+    "parse:sample-files:legacy:opera:hiex-fixtures": "bun scripts/compare-opera-sample-to-legacy.ts ref/revparmax-import/revparmax_v2-db-24052026.mysql.bz2 ref/revparmax-import/fixtures/hiex",
     "parse:sample-files:legacy:opera:hiex-may-15": "bun scripts/compare-opera-sample-to-legacy.ts ref/revparmax-import/revparmax_v2-db-24052026.mysql.bz2 ref/revparmax-import/hiex-may-15-legacy-sample-files"
   },
   "dependencies": {

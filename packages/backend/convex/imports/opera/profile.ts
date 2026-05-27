@@ -191,6 +191,7 @@ const parseManagerReport = (
 
 const TRIAL_BALANCE_REVENUE_CATEGORIES: Record<string, string> = {
   "1000": "ROOMS REVENUE",
+  "1005": "ROOMS REVENUE",
   "1010": "ROOMS REVENUE",
   "4601": "MISC.",
   "5106": "MARKET",
@@ -199,10 +200,12 @@ const TRIAL_BALANCE_REVENUE_CATEGORIES: Record<string, string> = {
 
 const TRIAL_BALANCE_PAYMENT_TYPES: Record<string, string> = {
   "9000": "CASH",
+  "9001": "CHECK",
   "9002": "DIRECT BILL",
   "9003": "AMEX",
   "9004": "VISA",
   "9005": "MASTERCARD",
+  "9007": "DISCOVER",
   "9019": "INTERAC",
 };
 
