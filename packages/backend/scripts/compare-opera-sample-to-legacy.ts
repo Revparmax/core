@@ -7,7 +7,10 @@ import { parseAttachment } from "../convex/imports/registry";
 import type { ParsedHotelReport } from "../convex/imports/types";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
-const sampleDir = path.join(repoRoot, "ref/revparmax-import/hiex-sample-files");
+const defaultSampleDir = path.join(
+  repoRoot,
+  "ref/revparmax-import/hiex-sample-files"
+);
 const defaultDumpPath = path.join(
   repoRoot,
   "ref/revparmax-import/revparmax_v2-db-24052026.mysql.bz2"
@@ -20,6 +23,7 @@ const TUPLE_REGEX = /\(([^()]*)\)/g;
 
 interface LegacyAuditSnapshot {
   paces: Array<{ adr: number; date: string; rooms: number }>;
+  paymentStats: Record<string, number>;
   revenueStats: Record<string, number>;
   roomStats: Record<string, number>;
 }
@@ -64,7 +68,8 @@ const applyLegacyTuple = (
   tableName: string,
   fields: string[],
   roomCategoryNames: Map<string, string>,
-  revenueCategoryNames: Map<string, string>
+  revenueCategoryNames: Map<string, string>,
+  paymentTypeNames: Map<string, string>
 ) => {
   if (tableName === "room_categories") {
     roomCategoryNames.set(fields[0], fields[1]);
@@ -73,6 +78,15 @@ const applyLegacyTuple = (
 
   if (tableName === "revenue_categories") {
     revenueCategoryNames.set(fields[0], fields[2]);
+    return;
+  }
+
+  if (tableName === "payment_types") {
+    paymentTypeNames.set(fields[0], fields[1]);
+    if (snapshot.paymentStats[fields[0]] !== undefined) {
+      snapshot.paymentStats[fields[1]] = snapshot.paymentStats[fields[0]];
+      delete snapshot.paymentStats[fields[0]];
+    }
     return;
   }
 
@@ -85,6 +99,12 @@ const applyLegacyTuple = (
   if (tableName === "revenue_stats" && Number(fields[1]) === auditId) {
     const categoryName = revenueCategoryNames.get(fields[2]) ?? fields[2];
     snapshot.revenueStats[categoryName] = Number(fields[3]) / 100;
+    return;
+  }
+
+  if (tableName === "payment_type_stats" && Number(fields[3]) === auditId) {
+    const paymentTypeName = paymentTypeNames.get(fields[1]) ?? fields[1];
+    snapshot.paymentStats[paymentTypeName] = Number(fields[2]) / 100;
     return;
   }
 
@@ -102,7 +122,9 @@ const extractLegacySnapshot = async (
 ): Promise<LegacyAuditSnapshot> => {
   const roomCategoryNames = new Map<string, string>();
   const revenueCategoryNames = new Map<string, string>();
+  const paymentTypeNames = new Map<string, string>();
   const snapshot: LegacyAuditSnapshot = {
+    paymentStats: {},
     paces: [],
     revenueStats: {},
     roomStats: {},
@@ -127,7 +149,8 @@ const extractLegacySnapshot = async (
         tableName,
         parseSqlFields(tuple),
         roomCategoryNames,
-        revenueCategoryNames
+        revenueCategoryNames,
+        paymentTypeNames
       );
     }
   }
@@ -135,7 +158,9 @@ const extractLegacySnapshot = async (
   return snapshot;
 };
 
-const parseOperaSamples = async (): Promise<ParsedHotelReport[]> => {
+const parseOperaSamples = async (
+  sampleDir: string
+): Promise<ParsedHotelReport[]> => {
   const filenames = (await readdir(sampleDir)).sort((first, second) =>
     first.localeCompare(second, undefined, { numeric: true })
   );
@@ -160,6 +185,40 @@ const parseOperaSamples = async (): Promise<ParsedHotelReport[]> => {
 const formatAmount = (value: number | undefined): string =>
   value === undefined ? "missing" : value.toFixed(2);
 
+const resolveInputPath = (inputPath: string | undefined, fallback: string) => {
+  if (!inputPath) {
+    return fallback;
+  }
+
+  return path.isAbsolute(inputPath)
+    ? inputPath
+    : path.resolve(repoRoot, inputPath);
+};
+
+const centsForLabel = (
+  lines: ParsedHotelReport["revenue"],
+  label: string
+): number | undefined =>
+  lines?.find((line) => line.sourceLabel === label)?.amount;
+
+const centsForPaymentType = (
+  lines: ParsedHotelReport["payments"],
+  paymentType: string
+): number | undefined =>
+  lines?.find((line) => line.paymentType === paymentType.toUpperCase())?.amount;
+
+const dollarsForCents = (amount: number | undefined): number | undefined =>
+  amount === undefined ? undefined : amount / 100;
+
+const formatParsedOnlyLines = (
+  lines: Array<{ amount: number; label: string }>
+): string =>
+  lines
+    .map(
+      (line) => `${line.label}=${formatAmount(dollarsForCents(line.amount))}`
+    )
+    .join(", ");
+
 const percentDelta = (
   actual: number | undefined,
   expected: number | undefined
@@ -172,26 +231,41 @@ const percentDelta = (
 };
 
 const main = async () => {
-  const dumpPath = process.argv[2] ?? defaultDumpPath;
+  const dumpPath = resolveInputPath(process.argv[2], defaultDumpPath);
+  const sampleDir = resolveInputPath(process.argv[3], defaultSampleDir);
   const [legacy, reports] = await Promise.all([
     extractLegacySnapshot(dumpPath),
-    parseOperaSamples(),
+    parseOperaSamples(sampleDir),
   ]);
 
   const managerReport = reports.find(
     (report) => report.reportType === "hotel_statistics"
   );
-  const historyForecast = reports.find((report) => report.filename === "5.xml");
-  const reservationPace = reports.find(
-    (report) => report.filename === "10.xml"
+  const trialBalance = reports.find(
+    (report) => report.reportType === "final_audit"
   );
-  const businessOnBooks = reports.find((report) => report.filename === "9.xml");
+  const historyForecast = reports.find(
+    (report) =>
+      report.reportType === "occupancy_forecast" &&
+      report.filename.toLowerCase().includes("history_forecast")
+  );
+  const reservationPace = reports.find(
+    (report) =>
+      report.reportType === "occupancy_forecast" &&
+      report.filename.toLowerCase().includes("reservation_pace")
+  );
+  const businessOnBooks = reports.find(
+    (report) =>
+      report.reportType === "occupancy_forecast" &&
+      report.filename.toLowerCase().includes("business")
+  );
 
   const paceFor = (report: ParsedHotelReport | undefined) =>
     report?.paceSnapshots?.find((pace) => pace.forecastDate === targetDate);
   const legacyPace = legacy.paces.find((pace) => pace.date === targetDate);
 
   console.log(`Legacy audit ${auditId} (${targetDate}, company 4)`);
+  console.log(`Sample directory: ${sampleDir}`);
   console.log("\nRoom stats");
   const roomComparisons = [
     ["Rooms Occupied", managerReport?.roomStatistics?.roomsOccupied],
@@ -214,18 +288,13 @@ const main = async () => {
   }
 
   console.log("\nRevenue stats");
-  const roomRevenue = managerReport?.revenue?.find(
-    (line) => line.sourceLabel === "ROOM REVENUE"
-  )?.amount;
-  const otherRevenue = managerReport?.revenue?.find(
-    (line) => line.sourceLabel === "OTHER REVENUE"
-  )?.amount;
   const revenueComparisons = [
     [
       "Rooms Revenue",
-      roomRevenue === undefined ? undefined : roomRevenue / 100,
+      dollarsForCents(centsForLabel(trialBalance?.revenue, "ROOMS REVENUE")),
     ],
-    ["Misc.", otherRevenue === undefined ? undefined : otherRevenue / 100],
+    ["Misc.", dollarsForCents(centsForLabel(trialBalance?.revenue, "MISC."))],
+    ["Market", dollarsForCents(centsForLabel(trialBalance?.revenue, "MARKET"))],
   ] as const;
 
   for (const [label, parsed] of revenueComparisons) {
@@ -235,11 +304,52 @@ const main = async () => {
     );
   }
 
+  console.log("\nPayment stats");
+  const paymentComparisons = Object.keys(legacy.paymentStats).map(
+    (paymentType) => {
+      const parsed = centsForPaymentType(trialBalance?.payments, paymentType);
+      return [paymentType, dollarsForCents(parsed)] as const;
+    }
+  );
+
+  for (const [label, parsed] of paymentComparisons) {
+    const expected = legacy.paymentStats[label];
+    console.log(
+      `${label}: parsed=${formatAmount(parsed)} legacy=${formatAmount(expected)} delta=${percentDelta(parsed, expected)}`
+    );
+  }
+
+  const legacyPaymentLabels = new Set(
+    Object.keys(legacy.paymentStats).map((label) => label.toUpperCase())
+  );
+  const parsedOnlyPayments =
+    trialBalance?.payments
+      ?.filter((payment) => !legacyPaymentLabels.has(payment.paymentType))
+      .map((payment) => ({
+        amount: payment.amount,
+        label: payment.paymentType,
+      })) ?? [];
+
+  if (parsedOnlyPayments.length > 0) {
+    console.log(
+      `Parsed-only payments: ${formatParsedOnlyLines(parsedOnlyPayments)}`
+    );
+  }
+
   console.log("\nPace sources for target date");
   const paceComparisons = [
-    ["history_forecast sample 5.xml", paceFor(historyForecast)],
-    ["business_on_the_books sample 9.xml", paceFor(businessOnBooks)],
-    ["reservation_pace sample 10.xml", paceFor(reservationPace)],
+    [
+      `history_forecast ${historyForecast?.filename ?? "missing"}`,
+      paceFor(historyForecast),
+    ],
+    [
+      `business_on_the_books ${businessOnBooks?.filename ?? "missing"}`,
+      paceFor(businessOnBooks),
+    ],
+    [
+      `reservation_pace ${reservationPace?.filename ?? "missing"}`,
+      paceFor(reservationPace),
+    ],
   ] as const;
 
   for (const [label, pace] of paceComparisons) {

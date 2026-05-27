@@ -118,6 +118,8 @@ export const parseOperaReport = (
       };
     case "BUSINESS_ON_THE_BOOKS":
       return { ...base, ...parseBusinessOnTheBooks(attachment.content) };
+    case "TRIAL_BALANCE":
+      return { ...base, ...parseTrialBalance(attachment.content) };
     case "RES_STATISTICS1":
     case "RES_FORECAST1":
       return { ...base, ...parseMarketSegments(attachment.content, warnings) };
@@ -185,6 +187,74 @@ const parseManagerReport = (
   }
 
   return { revenue, roomStatistics };
+};
+
+const TRIAL_BALANCE_REVENUE_CATEGORIES: Record<string, string> = {
+  "1000": "ROOMS REVENUE",
+  "1010": "ROOMS REVENUE",
+  "4601": "MISC.",
+  "5106": "MARKET",
+  "5108": "MARKET",
+};
+
+const TRIAL_BALANCE_PAYMENT_TYPES: Record<string, string> = {
+  "9000": "CASH",
+  "9002": "DIRECT BILL",
+  "9003": "AMEX",
+  "9004": "VISA",
+  "9005": "MASTERCARD",
+  "9019": "INTERAC",
+};
+
+const aggregateAmount = (
+  totals: Map<string, number>,
+  label: string,
+  amount: number
+) => {
+  totals.set(label, (totals.get(label) ?? 0) + amount);
+};
+
+const parseTrialBalance = (xml: string): Partial<ParsedHotelReport> => {
+  const revenueTotals = new Map<string, number>();
+  const paymentTotals = new Map<string, number>();
+  let auditDate: string | undefined;
+
+  for (const trxTypeBlock of blocksForTag(xml, "G_TRX_TYPE")) {
+    const trxType = normalizeLabel(textForTag(trxTypeBlock, "TRX_TYPE"));
+
+    for (const trxCodeBlock of blocksForTag(trxTypeBlock, "G_TRX_CODE")) {
+      const code = textForTag(trxCodeBlock, "TRX_CODE");
+      const amount = parseCurrency(textForTag(trxCodeBlock, "TB_AMOUNT"));
+      auditDate ??= parsePmsDate(textForTag(trxCodeBlock, "TRX_DATE"));
+
+      if (trxType === "REVENUE") {
+        const revenueCategory = TRIAL_BALANCE_REVENUE_CATEGORIES[code];
+        if (revenueCategory) {
+          aggregateAmount(revenueTotals, revenueCategory, amount);
+        }
+        continue;
+      }
+
+      if (trxType === "PAYMENT") {
+        const paymentType = TRIAL_BALANCE_PAYMENT_TYPES[code];
+        if (paymentType) {
+          aggregateAmount(paymentTotals, paymentType, Math.abs(amount));
+        }
+      }
+    }
+  }
+
+  return {
+    auditDate,
+    payments: Array.from(paymentTotals, ([paymentType, amount]) => ({
+      amount,
+      paymentType,
+    })),
+    revenue: Array.from(revenueTotals, ([sourceLabel, amount]) => ({
+      amount,
+      sourceLabel,
+    })),
+  };
 };
 
 const parseHistoryForecast = (
