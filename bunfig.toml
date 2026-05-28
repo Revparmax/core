@@ -1,0 +1,19 @@
+[install]
+# Supply-chain guard: only resolve package versions published at least 7 days ago.
+minimumReleaseAge = 604800
+
+# Avoid surprise install-time code execution. Bun already blocks dependency
+# lifecycle scripts unless trusted, but this also blocks project/trusted scripts.
+ignoreScripts = true
+concurrentScripts = 0
+
+# Avoid implicit installs when running scripts in a fresh checkout.
+auto = "disable"
+
+# Keep registry resolution explicit.
+registry = "https://registry.npmjs.org"
+
+[install.cache]
+dir = "/tmp/bun-cache"
+disable = false
+disableManifest = false

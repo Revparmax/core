@@ -10,6 +10,7 @@
     "legacy:dump-to-convex-jsonl": "bun scripts/legacy-mysql-dump-to-convex-jsonl.ts",
     "legacy:filter-paces-jsonl": "bun scripts/filter-legacy-paces-jsonl.ts",
     "legacy:import-jsonl:convex": "bun scripts/import-legacy-jsonl-to-convex.ts",
+    "legacy:canonicalize-read-model": "bun scripts/canonicalize-legacy-read-model.ts",
     "parse:sample-files": "bun scripts/parse-sample-files.ts",
     "parse:sample-files:json": "bun scripts/export-sample-parse-output.ts",
     "parse:sample-files:legacy:opera": "bun scripts/compare-opera-sample-to-legacy.ts",

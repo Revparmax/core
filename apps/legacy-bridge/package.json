@@ -1,0 +1,22 @@
+{
+  "name": "legacy-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "check-types": "bunx tsc --noEmit",
+    "test": "bun test",
+    "smoke": "bun scripts/smoke.ts",
+    "smoke:mcp": "bun scripts/mcp-smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "convex": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@my-better-t-app/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}
