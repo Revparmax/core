@@ -6,6 +6,7 @@ import { companies } from "./schema/companies";
 import { competitionData, competitors } from "./schema/competition";
 import { dataImports } from "./schema/dataImports";
 import { extractionResults, extractorProfiles } from "./schema/extraction";
+import { legacyTables } from "./schema/legacy";
 import { paceSnapshots } from "./schema/paceSnapshots";
 import { paymentRecords, paymentTypes } from "./schema/payments";
 import { properties } from "./schema/properties";
@@ -35,4 +36,5 @@ export default defineSchema({
   alerts,
   extractorProfiles,
   extractionResults,
+  ...legacyTables,
 });

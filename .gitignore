@@ -1,5 +1,6 @@
 node_modules
 .turbo
+tmp/
 *.mysql
 .direnv
 _bmad
