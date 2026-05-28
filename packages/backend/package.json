@@ -8,6 +8,7 @@
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success",
     "legacy:dump-to-convex-jsonl": "bun scripts/legacy-mysql-dump-to-convex-jsonl.ts",
+    "legacy:filter-paces-jsonl": "bun scripts/filter-legacy-paces-jsonl.ts",
     "legacy:import-jsonl:convex": "bun scripts/import-legacy-jsonl-to-convex.ts",
     "parse:sample-files": "bun scripts/parse-sample-files.ts",
     "parse:sample-files:json": "bun scripts/export-sample-parse-output.ts",
