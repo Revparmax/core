@@ -47,6 +47,9 @@ export const sameDateLastYear = (value: string): string => {
   return formatIsoDate(candidate);
 };
 
+export const sameWeekdayLastYear = (value: string): string =>
+  addDays(value, -364);
+
 export const monthRange = (
   month: string
 ): { endDate: string; startDate: string } => {

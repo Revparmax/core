@@ -29,6 +29,7 @@ bun --filter legacy-bridge start
 Defaults:
 
 - Bridge URL: `http://127.0.0.1:8787`
+- Pace inspector: `http://127.0.0.1:8787/inspector`
 - OpenAPI: `http://127.0.0.1:8787/openapi.json`
 - MCP Streamable HTTP: `http://127.0.0.1:8787/mcp`
 

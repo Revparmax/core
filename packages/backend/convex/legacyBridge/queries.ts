@@ -8,7 +8,7 @@ import {
   datesInRange,
   daysBetween,
   monthRange,
-  sameDateLastYear,
+  sameWeekdayLastYear,
 } from "./dateMath";
 
 const DEFAULT_LIMIT = 100;
@@ -22,9 +22,17 @@ type ForecastColorStatus = "green" | "red" | "unavailable" | "yellow";
 interface ForecastRowContext {
   budgetAdr: number | null;
   budgetOccupancy: number | null;
-  lyBuckets: Map<string, Doc<"paceSnapshotDays"> | null>;
+  lyFinalEntries: Map<string, PaceEntry>;
+  lyMonthStartEntries: Map<string, PaceEntry>;
+  lyPaceBuckets: Map<string, Doc<"paceSnapshotDays"> | null>;
   property: Doc<"properties">;
   tyEntries: Map<string, PaceEntry>;
+  tyMonthStartEntries: Map<string, PaceEntry>;
+}
+
+interface ActualMetrics {
+  revenue: number | null;
+  rooms: number | null;
 }
 
 const rowNumber = (row: LegacyRow, key: string): number | undefined =>
@@ -186,6 +194,45 @@ const getPaceBucket = async (
     )
     .first();
 
+const sameDayPaceEntriesByDate = async (
+  ctx: QueryCtx,
+  propertyId: Id<"properties">,
+  dates: string[]
+): Promise<Map<string, PaceEntry>> => {
+  const entriesByDate = new Map<string, PaceEntry>();
+
+  for (const date of dates) {
+    const bucket = await getPaceBucket(ctx, propertyId, date);
+    const entry = bucket?.entries.find(
+      (candidate) => candidate.forDate === date
+    );
+    if (entry !== undefined) {
+      entriesByDate.set(date, entry);
+    }
+  }
+
+  return entriesByDate;
+};
+
+const paceActualMetricsByDate = async (
+  ctx: QueryCtx,
+  propertyId: Id<"properties">,
+  dates: string[]
+): Promise<Map<string, ActualMetrics>> => {
+  const entriesByDate = await sameDayPaceEntriesByDate(ctx, propertyId, dates);
+  const metricsByDate = new Map<string, ActualMetrics>();
+
+  for (const date of dates) {
+    const entry = entriesByDate.get(date);
+    const rooms = entry?.roomsOnBooks ?? null;
+    const revenue =
+      rooms !== null && entry?.adr !== undefined ? rooms * entry.adr : null;
+    metricsByDate.set(date, { revenue, rooms });
+  }
+
+  return metricsByDate;
+};
+
 const colorStatusFor = (
   paceGapPct: number | null,
   yellowThresholdPct: number
@@ -204,15 +251,27 @@ const colorStatusFor = (
 
 const warningsForForecastRow = (
   tyEntry: PaceEntry | undefined,
-  lyEntry: PaceEntry | undefined,
+  tyMonthStartEntry: PaceEntry | undefined,
+  lyMonthStartEntry: PaceEntry | undefined,
+  lyPaceEntry: PaceEntry | undefined,
+  lyFinalEntry: PaceEntry | undefined,
   rate: number | null
 ): string[] => {
   const warnings: string[] = [];
   if (!tyEntry) {
     warnings.push("missing_ty_pace");
   }
-  if (!lyEntry) {
+  if (!tyMonthStartEntry) {
+    warnings.push("missing_ty_month_start");
+  }
+  if (!lyMonthStartEntry) {
+    warnings.push("missing_ly_month_start");
+  }
+  if (!lyPaceEntry) {
     warnings.push("missing_ly_pace");
+  }
+  if (!lyFinalEntry) {
+    warnings.push("missing_ly_final");
   }
   if (rate === null) {
     warnings.push("rate_unavailable");
@@ -220,38 +279,76 @@ const warningsForForecastRow = (
   return warnings;
 };
 
+const nullableDifference = (
+  later: number | null,
+  earlier: number | null
+): number | null =>
+  later !== null && earlier !== null ? later - earlier : null;
+
+const paceGapPctFor = (
+  paceNet: number | null,
+  lyPaceRooms: number | null
+): number | null =>
+  paceNet !== null && lyPaceRooms !== null && lyPaceRooms > 0
+    ? (paceNet / lyPaceRooms) * 100
+    : null;
+
+const boundedProjectedRooms = (
+  currentRooms: number | null,
+  lyPickup: number | null,
+  totalRooms: number
+): number | null =>
+  currentRooms === null || lyPickup === null
+    ? null
+    : Math.min(Math.max(currentRooms + lyPickup, 0), totalRooms);
+
 const forecastRowForDate = (
   asOf: string,
   date: string,
   context: ForecastRowContext
 ) => {
   const advanceDays = daysBetween(asOf, date);
-  const lyStayDate = sameDateLastYear(date);
+  const lyStayDate = sameWeekdayLastYear(date);
   const lySnapshotDate = addDays(lyStayDate, -advanceDays);
   const tyEntry = context.tyEntries.get(date);
-  const lyEntry = context.lyBuckets
+  const tyMonthStartEntry = context.tyMonthStartEntries.get(date);
+  const lyPaceEntry = context.lyPaceBuckets
     .get(lySnapshotDate)
     ?.entries.find((entry) => entry.forDate === lyStayDate);
+  const lyMonthStartEntry = context.lyMonthStartEntries.get(lyStayDate);
+  const lyFinalEntry = context.lyFinalEntries.get(lyStayDate);
   const tyRooms = tyEntry?.roomsOnBooks ?? null;
+  const tyMonthStartRooms = tyMonthStartEntry?.roomsOnBooks ?? null;
   const tyAdr = tyEntry?.adr ?? null;
-  const lyRooms = lyEntry?.roomsOnBooks ?? null;
-  const paceNet =
-    tyRooms !== null && lyRooms !== null ? tyRooms - lyRooms : null;
-  const paceGapPct =
-    tyRooms !== null && lyRooms !== null && lyRooms > 0
-      ? ((tyRooms - lyRooms) / lyRooms) * 100
-      : null;
-  const rate = context.budgetAdr ?? tyAdr;
-  const projectedRooms =
-    tyRooms === null
-      ? null
-      : Math.min(Math.max(tyRooms, 0), context.property.totalRooms);
+  const lyComparableRooms = lyPaceEntry?.roomsOnBooks ?? null;
+  const lyMonthStartRooms = lyMonthStartEntry?.roomsOnBooks ?? null;
+  const lyFinalRooms = lyFinalEntry?.roomsOnBooks ?? null;
+  const tyPaceRooms = nullableDifference(tyRooms, tyMonthStartRooms);
+  const lyPaceRooms = nullableDifference(lyComparableRooms, lyMonthStartRooms);
+  const lyPickup = nullableDifference(lyFinalRooms, lyComparableRooms);
+  const paceNet = nullableDifference(tyPaceRooms, lyPaceRooms);
+  const paceGapPct = paceGapPctFor(paceNet, lyPaceRooms);
+  const rate = tyAdr ?? context.budgetAdr;
+  const forecastLift = lyPickup;
+  const projectedRooms = boundedProjectedRooms(
+    tyRooms,
+    lyPickup,
+    context.property.totalRooms
+  );
 
   return {
     date,
+    tyMonthStartRooms,
+    tyPaceRooms,
     tyRooms,
     tyAdr,
-    lyRooms,
+    lyComparableRooms,
+    lyMonthStartRooms,
+    lyPaceRooms,
+    lyRooms: lyComparableRooms,
+    lyFinalRooms,
+    lyPickup,
+    forecastLift,
     lySnapshotDate,
     lyStayDate,
     paceNet,
@@ -263,9 +360,120 @@ const forecastRowForDate = (
     budgetAdr: context.budgetAdr,
     budgetOccupancy: context.budgetOccupancy,
     projectedRooms,
+    forecastRooms: projectedRooms,
     projectedRevenue:
       projectedRooms !== null && rate !== null ? projectedRooms * rate : null,
-    warnings: warningsForForecastRow(tyEntry, lyEntry, rate),
+    warnings: warningsForForecastRow(
+      tyEntry,
+      tyMonthStartEntry,
+      lyMonthStartEntry,
+      lyPaceEntry,
+      lyFinalEntry,
+      rate
+    ),
+  };
+};
+
+type ForecastRow = ReturnType<typeof forecastRowForDate>;
+
+const sumActualMetric = (
+  metricsByDate: Map<string, ActualMetrics>,
+  dates: string[],
+  key: keyof ActualMetrics
+): { missing: boolean; total: number } => {
+  let missing = false;
+  let total = 0;
+
+  for (const date of dates) {
+    const value = metricsByDate.get(date)?.[key];
+    if (typeof value === "number") {
+      total += value;
+    } else {
+      missing = true;
+    }
+  }
+
+  return { missing, total };
+};
+
+const sumForecastValue = (
+  rows: ForecastRow[],
+  key: "forecastRooms" | "projectedRevenue"
+): { missing: boolean; total: number } => {
+  let missing = false;
+  let total = 0;
+
+  for (const row of rows) {
+    const value = row[key];
+    if (typeof value === "number") {
+      total += value;
+    } else {
+      missing = true;
+    }
+  }
+
+  return { missing, total };
+};
+
+const monthlyProjectionSummary = (
+  rows: ForecastRow[],
+  actualMetrics: Map<string, ActualMetrics>,
+  actualDates: string[],
+  totalRooms: number,
+  daysInMonth: number
+) => {
+  const actualRooms = sumActualMetric(actualMetrics, actualDates, "rooms");
+  const actualRevenue = sumActualMetric(actualMetrics, actualDates, "revenue");
+  const futureRooms = sumForecastValue(rows, "forecastRooms");
+  const futureRevenue = sumForecastValue(rows, "projectedRevenue");
+  const projectedRooms =
+    actualRooms.missing || futureRooms.missing
+      ? null
+      : actualRooms.total + futureRooms.total;
+  const projectedRevenue =
+    actualRevenue.missing || futureRevenue.missing
+      ? null
+      : actualRevenue.total + futureRevenue.total;
+  const availableRoomNights = totalRooms * daysInMonth;
+  const projectedOccupancy =
+    projectedRooms === null
+      ? null
+      : (projectedRooms / availableRoomNights) * 100;
+  const projectedAdr =
+    projectedRooms === null || projectedRevenue === null || projectedRooms === 0
+      ? null
+      : projectedRevenue / projectedRooms;
+  const projectedRevpar =
+    projectedRevenue === null ? null : projectedRevenue / availableRoomNights;
+  const warnings: string[] = [];
+
+  if (actualRooms.missing) {
+    warnings.push("actual_rooms_incomplete");
+  }
+  if (actualRevenue.missing) {
+    warnings.push("actual_revenue_incomplete");
+  }
+  if (futureRooms.missing) {
+    warnings.push("future_rooms_incomplete");
+  }
+  if (futureRevenue.missing) {
+    warnings.push("future_revenue_incomplete");
+  }
+
+  return {
+    actualDateCount: actualDates.length,
+    actualRevenue: actualRevenue.missing ? null : actualRevenue.total,
+    actualRooms: actualRooms.missing ? null : actualRooms.total,
+    availableRoomNights,
+    futureDateCount: rows.length,
+    futureRevenue: futureRevenue.missing ? null : futureRevenue.total,
+    futureRooms: futureRooms.missing ? null : futureRooms.total,
+    projectedAdr,
+    projectedOccupancy,
+    projectedRevenue,
+    projectedRevpar,
+    projectedRooms,
+    warnings,
   };
 };
 
@@ -547,9 +755,17 @@ export const getMonthForecast = query({
     }
 
     const { startDate, endDate } = monthRange(args.month);
-    const fromDate = args.asOf > startDate ? args.asOf : startDate;
+    const monthDates = datesInRange(startDate, endDate);
+    const afterAsOf = addDays(args.asOf, 1);
+    const fromDate = afterAsOf > startDate ? afterAsOf : startDate;
     const dates = datesInRange(fromDate, endDate);
+    const tyMonthBaselineDate = addDays(startDate, -1);
     const tyBucket = await getPaceBucket(ctx, args.propertyId, args.asOf);
+    const tyMonthStartBucket = await getPaceBucket(
+      ctx,
+      args.propertyId,
+      tyMonthBaselineDate
+    );
 
     if (!tyBucket) {
       return {
@@ -558,6 +774,18 @@ export const getMonthForecast = query({
         month: args.month,
         rows: [],
         warnings: [`No TY pace bucket found for ${args.asOf}.`],
+      };
+    }
+
+    if (!tyMonthStartBucket) {
+      return {
+        propertyId: args.propertyId,
+        asOf: args.asOf,
+        month: args.month,
+        rows: [],
+        warnings: [
+          `No TY month-start baseline bucket found for ${tyMonthBaselineDate}.`,
+        ],
       };
     }
 
@@ -576,15 +804,29 @@ export const getMonthForecast = query({
     const budgetAdr = scaledNumber(roomBudget?.row.target_adr);
     const budgetOccupancy = scaledNumber(roomBudget?.row.target_occupancy);
     const tyEntries = entryMapFor(tyBucket.entries);
-    const lyBuckets = new Map<string, Doc<"paceSnapshotDays"> | null>();
+    const tyMonthStartEntries = entryMapFor(tyMonthStartBucket.entries);
+    const lyMonthStartDate = sameWeekdayLastYear(tyMonthBaselineDate);
+    const lyMonthStartBucket = await getPaceBucket(
+      ctx,
+      args.propertyId,
+      lyMonthStartDate
+    );
+    const lyMonthStartEntries = entryMapFor(lyMonthStartBucket?.entries ?? []);
+    const lyStayDates = dates.map((date) => sameWeekdayLastYear(date));
+    const actualDates = monthDates.filter((date) => date <= args.asOf);
+    const [lyFinalEntries, tyActualMetrics] = await Promise.all([
+      sameDayPaceEntriesByDate(ctx, args.propertyId, lyStayDates),
+      paceActualMetricsByDate(ctx, args.propertyId, actualDates),
+    ]);
+    const lyPaceBuckets = new Map<string, Doc<"paceSnapshotDays"> | null>();
 
     for (const date of dates) {
       const advanceDays = daysBetween(args.asOf, date);
-      const lyStayDate = sameDateLastYear(date);
+      const lyStayDate = sameWeekdayLastYear(date);
       const lySnapshotDate = addDays(lyStayDate, -advanceDays);
 
-      if (!lyBuckets.has(lySnapshotDate)) {
-        lyBuckets.set(
+      if (!lyPaceBuckets.has(lySnapshotDate)) {
+        lyPaceBuckets.set(
           lySnapshotDate,
           await getPaceBucket(ctx, args.propertyId, lySnapshotDate)
         );
@@ -595,10 +837,20 @@ export const getMonthForecast = query({
       forecastRowForDate(args.asOf, date, {
         budgetAdr,
         budgetOccupancy,
-        lyBuckets,
+        lyFinalEntries,
+        lyMonthStartEntries,
+        lyPaceBuckets,
         property,
         tyEntries,
+        tyMonthStartEntries,
       })
+    );
+    const summary = monthlyProjectionSummary(
+      rows,
+      tyActualMetrics,
+      actualDates,
+      property.totalRooms,
+      monthDates.length
     );
 
     return {
@@ -607,6 +859,7 @@ export const getMonthForecast = query({
       month: args.month,
       legacyCompanyId,
       rows,
+      summary,
       warnings: [],
     };
   },

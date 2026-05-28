@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 
 import { loadConfig } from "./config";
 import { handleRest, writeError, writeJson } from "./http";
+import { inspectorHtml } from "./inspector";
 import { handleMcpRequest } from "./mcp";
 import { openApiSpec } from "./openapi";
 import { LegacyBridgeService } from "./service";
@@ -32,6 +33,12 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === "/openapi.json" && request.method === "GET") {
     writeJson(response, 200, openApiSpec);
+    return;
+  }
+
+  if (url.pathname === "/inspector" && request.method === "GET") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(inspectorHtml);
     return;
   }
 

@@ -5,6 +5,7 @@ import {
   daysBetween,
   monthRange,
   sameDateLastYear,
+  sameWeekdayLastYear,
 } from "../../../packages/backend/convex/legacyBridge/dateMath";
 
 describe("forecast date math", () => {
@@ -14,6 +15,11 @@ describe("forecast date math", () => {
 
   it("maps leap day to February 28 when the prior year is not leap", () => {
     expect(sameDateLastYear("2024-02-29")).toBe("2023-02-28");
+  });
+
+  it("shifts dates to the same weekday last year for pace overlays", () => {
+    expect(sameWeekdayLastYear("2026-05-23")).toBe("2025-05-24");
+    expect(sameWeekdayLastYear("2026-04-30")).toBe("2025-05-01");
   });
 
   it("computes UTC day offsets", () => {
