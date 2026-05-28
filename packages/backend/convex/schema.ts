@@ -7,6 +7,8 @@ import { competitionData, competitors } from "./schema/competition";
 import { dataImports } from "./schema/dataImports";
 import { extractionResults, extractorProfiles } from "./schema/extraction";
 import { legacyTables } from "./schema/legacy";
+import { legacyAuditSnapshots } from "./schema/legacyAuditSnapshots";
+import { paceSnapshotDays } from "./schema/paceSnapshotDays";
 import { paceSnapshots } from "./schema/paceSnapshots";
 import { paymentRecords, paymentTypes } from "./schema/payments";
 import { properties } from "./schema/properties";
@@ -15,6 +17,7 @@ import {
   revenueCategories,
   revenueParentCategories,
 } from "./schema/revenue";
+import { sourceRefs } from "./schema/sourceRefs";
 import { userProfiles } from "./schema/userProfiles";
 
 export default defineSchema({
@@ -33,6 +36,9 @@ export default defineSchema({
   competitionData,
   paceSnapshots,
   budgets,
+  sourceRefs,
+  paceSnapshotDays,
+  legacyAuditSnapshots,
   alerts,
   extractorProfiles,
   extractionResults,
