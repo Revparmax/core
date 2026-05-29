@@ -3,6 +3,11 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
+import {
+  legacyPercentHundredthsToRatio,
+  occupancyRatio,
+  scaleLegacyHundredths,
+} from "./legacy-read-model-transforms";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
 const defaultSourceDir = path.join(repoRoot, "tmp/legacy-convex-import");
@@ -285,9 +290,6 @@ const stringFromRow = (
   return typeof value === "string" ? value : undefined;
 };
 
-const scaled = (value: number | undefined): number | undefined =>
-  value === undefined ? undefined : value / 100;
-
 const nullableScaled = (value: unknown): number | null =>
   typeof value === "number" ? value / 100 : null;
 
@@ -529,7 +531,7 @@ const loadRoomStatistics = async (
   )) {
     const legacyAuditId = numberFromRow(document.row, "audit_id");
     const categoryId = numberFromRow(document.row, "room_category_id");
-    const value = scaled(numberFromRow(document.row, "amount"));
+    const value = scaleLegacyHundredths(numberFromRow(document.row, "amount"));
     if (
       legacyAuditId === undefined ||
       categoryId === undefined ||
@@ -594,7 +596,7 @@ const loadNonRoomRevenue = async (
       document.row,
       "revenue_category_id"
     );
-    const amount = scaled(numberFromRow(document.row, "amount"));
+    const amount = scaleLegacyHundredths(numberFromRow(document.row, "amount"));
 
     if (
       audit === undefined ||
@@ -641,7 +643,7 @@ const loadPaymentRecords = async (
     const legacyPaymentTypeStatId =
       numberFromRow(document.row, "payment_type_stat_id") ?? document.legacyId;
     const legacyPaymentTypeId = numberFromRow(document.row, "payment_type_id");
-    const amount = scaled(numberFromRow(document.row, "amount"));
+    const amount = scaleLegacyHundredths(numberFromRow(document.row, "amount"));
 
     if (
       audit === undefined ||
@@ -688,7 +690,9 @@ const loadCompetitors = async (
         if (legacyCompetitionId === undefined || name === null) {
           return null;
         }
-        const totalRooms = scaled(numberFromRow(document.row, "total_rooms"));
+        const totalRooms = scaleLegacyHundredths(
+          numberFromRow(document.row, "total_rooms")
+        );
         return {
           legacyCompetitionId,
           name,
@@ -719,17 +723,20 @@ const loadCompetitionData = async (
     const legacyCompetitionStatId =
       numberFromRow(document.row, "competition_stat_id") ?? document.legacyId;
     const legacyCompetitionId = numberFromRow(document.row, "competition_id");
-    const rate = scaled(numberFromRow(document.row, "rate"));
-    const occupiedRooms = scaled(numberFromRow(document.row, "occupied_rooms"));
+    const rate = scaleLegacyHundredths(numberFromRow(document.row, "rate"));
+    const occupiedRooms = scaleLegacyHundredths(
+      numberFromRow(document.row, "occupied_rooms")
+    );
     const totalRooms =
       legacyCompetitionId === undefined
         ? undefined
-        : scaled(
+        : scaleLegacyHundredths(
             numberFromRow(
               competitions.get(legacyCompetitionId)?.row ?? {},
               "total_rooms"
             )
           );
+    const dailyOccupancy = occupancyRatio(occupiedRooms, totalRooms);
 
     if (
       audit === undefined ||
@@ -746,11 +753,7 @@ const loadCompetitionData = async (
       legacyCompetitionId,
       capturedAt: Date.parse(`${audit.snapshotDate}T00:00:00.000Z`),
       ...(rate === undefined ? {} : { rate }),
-      ...(occupiedRooms === undefined ||
-      totalRooms === undefined ||
-      totalRooms <= 0
-        ? {}
-        : { dailyOccupancy: occupiedRooms / totalRooms }),
+      ...(dailyOccupancy === undefined ? {} : { dailyOccupancy }),
     });
   }
 
@@ -769,10 +772,12 @@ const loadBudgets = async (options: Options): Promise<BudgetImport> => {
       numberFromRow(document.row, "budget_room_id") ?? document.legacyId;
     const month = numberFromRow(document.row, "month");
     const fiscalYear = numberFromRow(document.row, "year");
-    const budgetOccupancy = scaled(
+    const budgetOccupancy = legacyPercentHundredthsToRatio(
       numberFromRow(document.row, "target_occupancy")
     );
-    const budgetAdr = scaled(numberFromRow(document.row, "target_adr"));
+    const budgetAdr = scaleLegacyHundredths(
+      numberFromRow(document.row, "target_adr")
+    );
 
     if (
       legacyCompanyId === undefined ||
@@ -791,7 +796,7 @@ const loadBudgets = async (options: Options): Promise<BudgetImport> => {
       legacyCompanyId,
       fiscalYear,
       month,
-      budgetOccupancy: budgetOccupancy / 100,
+      budgetOccupancy,
       budgetAdr,
     });
   }
@@ -808,7 +813,7 @@ const loadBudgets = async (options: Options): Promise<BudgetImport> => {
     );
     const month = numberFromRow(document.row, "month");
     const fiscalYear = numberFromRow(document.row, "year");
-    const amount = scaled(numberFromRow(document.row, "amount"));
+    const amount = scaleLegacyHundredths(numberFromRow(document.row, "amount"));
 
     if (
       legacyCompanyId === undefined ||
@@ -1083,7 +1088,7 @@ const loadPaceBuckets = async (
   for await (const document of readJsonl(filePath)) {
     const legacyAuditId = numberFromRow(document.row, "audit_id");
     const forDate = stringFromRow(document.row, "for_date");
-    const rooms = scaled(numberFromRow(document.row, "rooms"));
+    const rooms = scaleLegacyHundredths(numberFromRow(document.row, "rooms"));
 
     if (
       legacyAuditId === undefined ||
@@ -1107,7 +1112,7 @@ const loadPaceBuckets = async (
         snapshotDate: audit.snapshotDate,
       } satisfies PaceBucketInput);
 
-    const adr = scaled(numberFromRow(document.row, "adr"));
+    const adr = scaleLegacyHundredths(numberFromRow(document.row, "adr"));
     bucket.entries.push({
       forDate,
       roomsOnBooks: rooms,
