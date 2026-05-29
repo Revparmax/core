@@ -12,6 +12,90 @@ Biome (the underlying engine) provides robust linting and formatting. Most issue
 
 ---
 
+## Temporary Local App Runbook
+
+This is the current local setup for the RevParMax review UI while the legacy
+read model is being migrated. It is intentionally temporary and more complex
+than it should be.
+
+### Local Data
+
+- Local Convex data lives under `packages/backend/.convex/local/default/`.
+- The SQLite DB file is
+  `packages/backend/.convex/local/default/convex_local_backend.sqlite3`.
+- Local Convex file/search/module storage lives in
+  `packages/backend/.convex/local/default/convex_local_storage/`.
+- The `legacy*` tables are frozen extract tables only. Product UI/API paths
+  should read canonical tables populated by conversion tools, not raw legacy
+  tables.
+
+### Bring Up Services
+
+Start Convex first:
+
+```bash
+cd packages/backend
+env TMPDIR=/tmp CONVEX_AGENT_MODE=anonymous bunx convex dev --typecheck disable --tail-logs disable
+```
+
+Expected Convex URLs:
+
+- Convex API: `http://127.0.0.1:3210`
+- Convex site proxy: `http://127.0.0.1:3211`
+
+If canonical data is missing, run the importer:
+
+```bash
+cd packages/backend
+CONVEX_URL=http://127.0.0.1:3210 bun scripts/canonicalize-legacy-read-model.ts --company-ids 4,103 --convex-url http://127.0.0.1:3210
+```
+
+Start the production-facing API:
+
+```bash
+env TMPDIR=/tmp CONVEX_URL=http://127.0.0.1:3210 REVPARMAX_API_PORT=8798 bun --filter api start
+```
+
+Start the migration/debug bridge inspector:
+
+```bash
+cd apps/legacy-bridge
+env TMPDIR=/tmp CONVEX_URL=http://127.0.0.1:3210 PORT=8799 bun src/server.ts
+```
+
+Start the web app for Tailscale browser access:
+
+```bash
+env __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=avicenx.tailff2a5.ts.net VITE_CONVEX_URL=https://avicenx.tailff2a5.ts.net:3210 VITE_CONVEX_SITE_URL=https://avicenx.tailff2a5.ts.net:3211 bun --filter web dev --host 127.0.0.1 --port 5173
+```
+
+Current useful URLs:
+
+- Review UI: `https://avicenx.tailff2a5.ts.net:5173/review`
+- Production API health: `https://avicenx.tailff2a5.ts.net:8798/health`
+- Production API companies: `https://avicenx.tailff2a5.ts.net:8798/companies`
+- Bridge inspector: `https://avicenx.tailff2a5.ts.net:8799/inspector`
+
+Tailscale serve mappings used for this setup:
+
+```bash
+sudo tailscale serve --bg --https=5173 5173
+sudo tailscale serve --bg --https=3210 3210
+sudo tailscale serve --bg --https=3211 3211
+sudo tailscale serve --bg --https=8798 8798
+sudo tailscale serve --bg --https=8799 8799
+```
+
+### Simplification Target
+
+This should become one checked-in command, for example `bun run dev:review`,
+that starts Convex, the API, the web app, and optionally the bridge with shared
+env defaults. The repo should also have a committed `.env.example` for these
+ports and a small health check that verifies Convex, `/companies`, `/review`,
+and `/inspector` before handing links to the user.
+
+---
+
 ## Core Principles
 
 Write code that is **accessible, performant, type-safe, and maintainable**. Focus on clarity and explicit intent over brevity.
