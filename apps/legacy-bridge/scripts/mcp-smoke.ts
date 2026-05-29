@@ -79,6 +79,13 @@ const main = async () => {
   if (auditHeader.legacyAuditId !== 20_265) {
     throw new Error("MCP audit detail did not match REST smoke audit");
   }
+  const auditPaces = assertArray(
+    assertObject(assertObject(audit, "audit").paces, "audit paces").items,
+    "audit pace preview items"
+  );
+  if (auditPaces.length > 25) {
+    throw new Error("MCP audit detail pace preview exceeded 25 rows");
+  }
 
   const forecast = parseToolJson(
     asToolResult(

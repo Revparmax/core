@@ -48,7 +48,12 @@ export const openApiSpec = {
       get: {
         operationId: "getAuditDetail",
         parameters: [pathInteger("auditId")],
-        responses: { "200": { description: "Joined audit detail snapshot" } },
+        responses: {
+          "200": {
+            description:
+              "Joined audit detail from canonical audit, room, revenue, payment, competition, and pace tables.",
+          },
+        },
       },
     },
     "/audits/{auditId}/paces": {
@@ -76,7 +81,7 @@ export const openApiSpec = {
         responses: {
           "200": {
             description:
-              "Legacy users with password hashes omitted and passwordHashPresent metadata",
+              "Reserved for canonical user migration data. Returns an empty list until legacy users have an approved product-table projection.",
           },
         },
       },
@@ -85,7 +90,12 @@ export const openApiSpec = {
       get: {
         operationId: "getHurdleRates",
         parameters: [pathInteger("companyId")],
-        responses: { "200": { description: "Company hurdle rate ranges" } },
+        responses: {
+          "200": {
+            description:
+              "Reserved for canonical hurdle-rate data. Returns an empty list until a product table is defined.",
+          },
+        },
       },
     },
     "/companies/{companyId}/budgets/rooms": {

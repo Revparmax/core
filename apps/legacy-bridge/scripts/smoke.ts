@@ -47,6 +47,11 @@ const assertAudit = async (legacyAuditId: number) => {
   if (auditHeader.legacyAuditId !== legacyAuditId) {
     throw new Error(`Audit ${legacyAuditId} was not returned`);
   }
+  const paces = assertObject(audit.paces, "audit detail paces");
+  const paceItems = assertArray(paces.items, "audit detail pace items");
+  if (paceItems.length > 25) {
+    throw new Error("Audit detail pace preview exceeded 25 rows");
+  }
 };
 
 const main = async () => {
