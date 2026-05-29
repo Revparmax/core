@@ -20,7 +20,8 @@ export const auditRecords = defineTable({
   verifiedAt: v.optional(v.number()),
 })
   .index("by_propertyId_date", ["propertyId", "auditDate"])
-  .index("by_companyId", ["companyId"]);
+  .index("by_companyId", ["companyId"])
+  .index("by_companyId_date", ["companyId", "auditDate"]);
 
 // roomRevenue is NEVER stored — derived as adr * roomsOccupied at query time (ADR-003).
 // totalRooms is snapshotted from the property at confirm time so that historical

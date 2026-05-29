@@ -35,6 +35,8 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
 interface ReviewCompany {
   legacyCompanyId: number;
   name: string | null;
@@ -110,6 +112,25 @@ const money = (value: number | null | undefined): string =>
 
 const numberText = (value: number | null | undefined): string =>
   value === null || value === undefined ? "—" : numberFormatter.format(value);
+
+const isValidIsoDate = (value: string | undefined): value is string => {
+  if (!(value && ISO_DATE_REGEX.test(value))) {
+    return false;
+  }
+
+  const [yearText, monthText, dayText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    year > 0 &&
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+};
 
 function MetricCard({
   icon: Icon,
@@ -247,14 +268,22 @@ function ReviewPage() {
     api.legacyBridge.queries.listAudits,
     selectedCompanyId === null
       ? "skip"
-      : { legacyCompanyId: selectedCompanyId, limit: 100 }
+      : { legacyCompanyId: selectedCompanyId, limit: 50 }
   );
   const audits = asAuditItems(auditsResult);
+  const validAudits = useMemo(
+    () =>
+      audits.filter(
+        (audit) => audit.legacyAuditId !== null && isValidIsoDate(audit.date)
+      ),
+    [audits]
+  );
   const [selectedAuditId, setSelectedAuditId] = useState<number | null>(null);
   const selectedAudit = useMemo(
     () =>
-      audits.find((audit) => audit.legacyAuditId === selectedAuditId) ?? null,
-    [audits, selectedAuditId]
+      validAudits.find((audit) => audit.legacyAuditId === selectedAuditId) ??
+      null,
+    [validAudits, selectedAuditId]
   );
   const auditDetail = asAuditDetail(
     useQuery(
@@ -265,7 +294,7 @@ function ReviewPage() {
   const forecast = asForecast(
     useQuery(
       api.legacyBridge.queries.getMonthForecast,
-      selectedCompany?.propertyId && selectedAudit?.date
+      selectedCompany?.propertyId && isValidIsoDate(selectedAudit?.date)
         ? {
             propertyId: selectedCompany.propertyId as Id<"properties">,
             asOf: selectedAudit.date,
@@ -286,15 +315,15 @@ function ReviewPage() {
   }, [companies, selectedCompanyId]);
 
   useEffect(() => {
-    if (audits.length === 0) {
+    if (validAudits.length === 0) {
       setSelectedAuditId(null);
       return;
     }
-    if (audits.some((audit) => audit.legacyAuditId === selectedAuditId)) {
+    if (validAudits.some((audit) => audit.legacyAuditId === selectedAuditId)) {
       return;
     }
-    setSelectedAuditId(audits[0].legacyAuditId);
-  }, [audits, selectedAuditId]);
+    setSelectedAuditId(validAudits[0].legacyAuditId);
+  }, [validAudits, selectedAuditId]);
 
   const roomRows =
     auditDetail?.roomStats?.map((row) => ({
@@ -356,7 +385,7 @@ function ReviewPage() {
                 }
                 value={selectedAuditId ?? ""}
               >
-                {audits.map((audit) => (
+                {validAudits.map((audit) => (
                   <option
                     key={audit.legacyAuditId ?? audit.date}
                     value={audit.legacyAuditId ?? ""}

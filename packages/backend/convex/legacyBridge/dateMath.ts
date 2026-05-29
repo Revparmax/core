@@ -2,14 +2,42 @@ const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_MONTH_REGEX = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const MS_PER_DAY = 86_400_000;
 
-export const assertIsoDate = (value: string): void => {
+export const isIsoDate = (value: string): boolean => {
   if (!ISO_DATE_REGEX.test(value)) {
+    return false;
+  }
+
+  const [yearText, monthText, dayText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    year > 0 &&
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+};
+
+export const isIsoMonth = (value: string): boolean => {
+  if (!ISO_MONTH_REGEX.test(value)) {
+    return false;
+  }
+
+  const [yearText] = value.split("-");
+  return Number(yearText) > 0;
+};
+
+export const assertIsoDate = (value: string): void => {
+  if (!isIsoDate(value)) {
     throw new Error(`Invalid date "${value}". Expected YYYY-MM-DD.`);
   }
 };
 
 export const assertIsoMonth = (value: string): void => {
-  if (!ISO_MONTH_REGEX.test(value)) {
+  if (!isIsoMonth(value)) {
     throw new Error(`Invalid month "${value}". Expected YYYY-MM.`);
   }
 };

@@ -7,6 +7,7 @@ import {
   assertIsoDate,
   datesInRange,
   daysBetween,
+  isIsoDate,
   monthRange,
   sameWeekdayLastYear,
 } from "./dateMath";
@@ -631,13 +632,15 @@ const monthlyProjectionSummary = (
 export const listCompanies = query({
   args: {},
   handler: async (ctx) => {
-    const companyRefs = (await ctx.db.query("sourceRefs").collect())
-      .filter(
-        (ref) =>
-          ref.source === "legacy" &&
-          ref.sourceTable === "legacyCompanies" &&
-          ref.targetTable === "companies"
-      )
+    const companyRefs = (
+      await ctx.db
+        .query("sourceRefs")
+        .withIndex("by_source_table_legacy", (q) =>
+          q.eq("source", "legacy").eq("sourceTable", "legacyCompanies")
+        )
+        .collect()
+    )
+      .filter((ref) => ref.targetTable === "companies")
       .sort((first, second) => first.legacyId - second.legacyId);
     const views = await Promise.all(
       companyRefs.map((ref) => canonicalCompanyView(ctx, ref.legacyId))
@@ -679,27 +682,39 @@ export const listAudits = query({
       return { items: [], nextCursor: null };
     }
 
-    const audits = (
-      await ctx.db
-        .query("auditRecords")
-        .withIndex("by_companyId", (q) =>
-          q.eq("companyId", companyRef.targetId as Id<"companies">)
-        )
-        .collect()
-    )
-      .filter(
-        (audit) =>
-          (!args.fromDate || audit.auditDate >= args.fromDate) &&
-          (!args.toDate || audit.auditDate <= args.toDate)
-      )
-      .sort((first, second) => second.auditDate.localeCompare(first.auditDate));
+    const limit = clampLimit(args.limit);
+    const offset = cursorOffset(args.cursor);
+    const audits = await ctx.db
+      .query("auditRecords")
+      .withIndex("by_companyId_date", (q) => {
+        const byCompany = q.eq(
+          "companyId",
+          companyRef.targetId as Id<"companies">
+        );
 
-    const paged = paginate(audits, args.limit, args.cursor);
+        if (args.fromDate && args.toDate) {
+          return byCompany
+            .gte("auditDate", args.fromDate)
+            .lte("auditDate", args.toDate);
+        }
+        if (args.fromDate) {
+          return byCompany.gte("auditDate", args.fromDate);
+        }
+        if (args.toDate) {
+          return byCompany.lte("auditDate", args.toDate);
+        }
+        return byCompany;
+      })
+      .order("desc")
+      .take(offset + limit + 1);
+    const items = audits
+      .slice(offset, offset + limit)
+      .filter((audit) => isIsoDate(audit.auditDate));
     const companyName = await canonicalCompanyName(ctx, args.legacyCompanyId);
 
     return {
       items: await Promise.all(
-        paged.items.map(async (audit) => {
+        items.map(async (audit) => {
           const legacyAuditRef = await sourceRefForTarget(
             ctx,
             "auditRecords",
@@ -715,7 +730,8 @@ export const listAudits = query({
           };
         })
       ),
-      nextCursor: paged.nextCursor,
+      nextCursor:
+        audits.length > offset + limit ? String(offset + limit) : null,
     };
   },
 });
