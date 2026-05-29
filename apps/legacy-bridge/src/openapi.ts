@@ -48,7 +48,12 @@ export const openApiSpec = {
       get: {
         operationId: "getAuditDetail",
         parameters: [pathInteger("auditId")],
-        responses: { "200": { description: "Joined audit detail snapshot" } },
+        responses: {
+          "200": {
+            description:
+              "Joined audit detail. Uses a materialized snapshot when present, otherwise falls back to raw legacy tables plus a canonical pace preview.",
+          },
+        },
       },
     },
     "/audits/{auditId}/paces": {

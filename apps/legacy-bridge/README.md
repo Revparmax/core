@@ -33,6 +33,12 @@ Defaults:
 - OpenAPI: `http://127.0.0.1:8787/openapi.json`
 - MCP Streamable HTTP: `http://127.0.0.1:8787/mcp`
 
+Audit detail responses use a materialized `legacyAuditSnapshots` document when
+one exists. If a snapshot has not been materialized yet, the bridge assembles the
+same joined response from the raw `legacy*` mirror tables and includes a 25-row
+pace preview from `paceSnapshotDays`. Full pace reads remain paginated through
+`/audits/{auditId}/paces` and the `get_audit_paces` MCP tool.
+
 ## Environment
 
 - `CONVEX_URL`: Convex backend URL. Defaults to `http://127.0.0.1:3210`.

@@ -35,6 +35,14 @@ interface ActualMetrics {
   rooms: number | null;
 }
 
+interface AuditDetailPaces {
+  items: PaceEntry[];
+  legacyAuditId?: number;
+  nextCursor: string | null;
+  snapshotDate?: string;
+  warnings: string[];
+}
+
 const rowNumber = (row: LegacyRow, key: string): number | undefined =>
   typeof row[key] === "number" ? row[key] : undefined;
 
@@ -179,6 +187,21 @@ const sortedByLegacyId = <T extends { legacyId?: number }>(rows: T[]): T[] =>
     (first, second) => (first.legacyId ?? 0) - (second.legacyId ?? 0)
   );
 
+const legacyDocsByAuditId = async (
+  ctx: QueryCtx,
+  tableName:
+    | "legacyCompetitionStats"
+    | "legacyFiles"
+    | "legacyPaymentTypeStats"
+    | "legacyReceivedAuditDataTypes"
+    | "legacyRevenueStats"
+    | "legacyRoomStats",
+  legacyAuditId: number
+) =>
+  (await ctx.db.query(tableName).collect()).filter(
+    (document) => rowNumber(document.row, "audit_id") === legacyAuditId
+  );
+
 const entryMapFor = (entries: PaceEntry[]): Map<string, PaceEntry> =>
   new Map(entries.map((entry) => [entry.forDate, entry]));
 
@@ -212,6 +235,243 @@ const sameDayPaceEntriesByDate = async (
   }
 
   return entriesByDate;
+};
+
+const auditPacesPreview = async (
+  ctx: QueryCtx,
+  legacyAuditId: number
+): Promise<AuditDetailPaces> => {
+  const bucket = await ctx.db
+    .query("paceSnapshotDays")
+    .withIndex("by_legacyAuditId", (q) => q.eq("legacyAuditId", legacyAuditId))
+    .first();
+
+  if (!bucket) {
+    return {
+      items: [],
+      nextCursor: null,
+      warnings: [
+        "No canonical pace bucket found for this audit. Raw legacyPaces is intentionally not scanned by audit detail.",
+      ],
+    };
+  }
+
+  const paged = paginate(bucket.entries, 25, undefined);
+  return {
+    items: paged.items,
+    nextCursor: paged.nextCursor,
+    snapshotDate: bucket.snapshotDate,
+    legacyAuditId: bucket.legacyAuditId,
+    warnings: [
+      "Paces are a limited preview from canonical daily pace buckets. Use getAuditPaces for pagination.",
+    ],
+  };
+};
+
+const attachAuditPacesPreview = async (
+  ctx: QueryCtx,
+  snapshot: unknown,
+  legacyAuditId: number
+) => {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    paces: await auditPacesPreview(ctx, legacyAuditId),
+  };
+};
+
+const buildAuditDetailFromRawLegacyTables = async (
+  ctx: QueryCtx,
+  legacyAuditId: number
+) => {
+  const audit = await ctx.db
+    .query("legacyAudits")
+    .withIndex("by_legacyId", (q) => q.eq("legacyId", legacyAuditId))
+    .first();
+
+  if (!audit) {
+    return null;
+  }
+
+  const legacyCompanyId = rowNumber(audit.row, "company_id");
+  const [
+    company,
+    roomCategories,
+    revenueCategories,
+    paymentTypes,
+    competitions,
+    competitionExtcodes,
+    auditDataTypes,
+    roomStats,
+    revenueStats,
+    paymentTypeStats,
+    competitionStats,
+    files,
+    receivedAuditDataTypes,
+    paces,
+  ] = await Promise.all([
+    legacyCompanyId === undefined
+      ? Promise.resolve(null)
+      : ctx.db
+          .query("legacyCompanies")
+          .withIndex("by_legacyId", (q) => q.eq("legacyId", legacyCompanyId))
+          .first(),
+    ctx.db.query("legacyRoomCategories").collect(),
+    ctx.db.query("legacyRevenueCategories").collect(),
+    ctx.db.query("legacyPaymentTypes").collect(),
+    ctx.db.query("legacyCompetitions").collect(),
+    ctx.db.query("legacyCompetitionExtcodes").collect(),
+    ctx.db.query("legacyAuditDataTypes").collect(),
+    legacyDocsByAuditId(ctx, "legacyRoomStats", legacyAuditId),
+    legacyDocsByAuditId(ctx, "legacyRevenueStats", legacyAuditId),
+    legacyDocsByAuditId(ctx, "legacyPaymentTypeStats", legacyAuditId),
+    legacyDocsByAuditId(ctx, "legacyCompetitionStats", legacyAuditId),
+    legacyDocsByAuditId(ctx, "legacyFiles", legacyAuditId),
+    legacyDocsByAuditId(ctx, "legacyReceivedAuditDataTypes", legacyAuditId),
+    auditPacesPreview(ctx, legacyAuditId),
+  ]);
+
+  const roomCategoryById = docsByNumberKey(roomCategories, "room_category_id");
+  const revenueCategoryById = docsByNumberKey(
+    revenueCategories,
+    "revenue_category_id"
+  );
+  const paymentTypeById = docsByNumberKey(paymentTypes, "payment_type_id");
+  const competitionById = docsByNumberKey(competitions, "competition_id");
+  const auditDataTypeById = docsByNumberKey(
+    auditDataTypes,
+    "audit_data_type_id"
+  );
+  const extcodesByCompetitionId = new Map<number, string[]>();
+
+  for (const extcode of competitionExtcodes) {
+    const competitionId = rowNumber(extcode.row, "competition_id");
+    if (competitionId === undefined) {
+      continue;
+    }
+    const extcodes = extcodesByCompetitionId.get(competitionId) ?? [];
+    extcodes.push(
+      `${rowString(extcode.row, "source") ?? "unknown"}:${
+        rowString(extcode.row, "external_code") ?? ""
+      }`
+    );
+    extcodesByCompetitionId.set(competitionId, extcodes);
+  }
+
+  return {
+    audit: {
+      legacyAuditId,
+      legacyCompanyId: legacyCompanyId ?? null,
+      companyName: nullableString(company?.row.company_name),
+      date: nullableString(audit.row.date),
+      preparedBy: nullableString(audit.row.prepared_by),
+      comments: nullableString(audit.row.comments),
+      source: "raw_legacy_tables",
+    },
+    roomStats: sortedByLegacyId(roomStats).map((document) => {
+      const categoryId = rowNumber(document.row, "room_category_id");
+      return {
+        legacyRoomStatId:
+          rowNumber(document.row, "room_stat_id") ?? document.legacyId,
+        legacyRoomCategoryId: categoryId ?? null,
+        roomCategory: categoryName(
+          roomCategoryById,
+          categoryId,
+          "category_name"
+        ),
+        amount: scaledNumber(document.row.amount),
+      };
+    }),
+    revenueStats: sortedByLegacyId(revenueStats).map((document) => {
+      const categoryId = rowNumber(document.row, "revenue_category_id");
+      const category = categoryId
+        ? revenueCategoryById.get(categoryId)
+        : undefined;
+      const parentId = rowNumber(category?.row ?? {}, "parent_category_id");
+      return {
+        legacyRevenueStatId:
+          rowNumber(document.row, "revenue_stat_id") ?? document.legacyId,
+        legacyRevenueCategoryId: categoryId ?? null,
+        revenueCategory: categoryName(
+          revenueCategoryById,
+          categoryId,
+          "category_name"
+        ),
+        parentCategory: categoryName(
+          revenueCategoryById,
+          parentId,
+          "category_name"
+        ),
+        amount: scaledNumber(document.row.amount),
+      };
+    }),
+    paymentTypeStats: sortedByLegacyId(paymentTypeStats).map((document) => {
+      const paymentTypeId = rowNumber(document.row, "payment_type_id");
+      return {
+        legacyPaymentTypeStatId:
+          rowNumber(document.row, "payment_type_stat_id") ?? document.legacyId,
+        legacyPaymentTypeId: paymentTypeId ?? null,
+        paymentType: categoryName(
+          paymentTypeById,
+          paymentTypeId,
+          "payment_name"
+        ),
+        amount: scaledNumber(document.row.amount),
+      };
+    }),
+    competitionStats: sortedByLegacyId(competitionStats).map((document) => {
+      const competitionId = rowNumber(document.row, "competition_id");
+      const competition = competitionId
+        ? competitionById.get(competitionId)
+        : undefined;
+      return {
+        legacyCompetitionStatId:
+          rowNumber(document.row, "competition_stat_id") ?? document.legacyId,
+        legacyCompetitionId: competitionId ?? null,
+        competitor: nullableString(competition?.row.company_name),
+        totalRooms: scaledNumber(competition?.row.total_rooms),
+        enabled: rowNumber(competition?.row ?? {}, "enabled") === 1,
+        extcodes: competitionId
+          ? (extcodesByCompetitionId.get(competitionId) ?? [])
+          : [],
+        rate: scaledNumber(document.row.rate),
+        occupiedRooms: scaledNumber(document.row.occupied_rooms),
+      };
+    }),
+    files: sortedByLegacyId(files).map((document) => ({
+      legacyFileId: rowNumber(document.row, "file_id") ?? document.legacyId,
+      title: nullableString(document.row.file_title),
+      filename: nullableString(document.row.file_name),
+      mimeType: nullableString(document.row.file_mimetype),
+      size: rowNumber(document.row, "file_size") ?? null,
+    })),
+    receivedAuditDataTypes: sortedByLegacyId(receivedAuditDataTypes).map(
+      (document) => {
+        const typeId = rowNumber(document.row, "audit_data_type_id");
+        const auditDataType = typeId
+          ? auditDataTypeById.get(typeId)
+          : undefined;
+        return {
+          legacyReceivedAuditDataTypeId:
+            rowNumber(document.row, "received_audit_data_type_id") ??
+            document.legacyId,
+          legacyAuditDataTypeId: typeId ?? null,
+          auditDataType: categoryName(
+            auditDataTypeById,
+            typeId,
+            "audit_data_type_name"
+          ),
+          source: nullableString(auditDataType?.row.source),
+          receivedTimestamp: nullableString(document.row.received_timestamp),
+          method: nullableString(document.row.method),
+        };
+      }
+    ),
+    paces,
+  };
 };
 
 const paceActualMetricsByDate = async (
@@ -567,7 +827,15 @@ export const getAuditDetail = query({
       )
       .first();
 
-    return snapshot?.snapshot ?? null;
+    if (snapshot) {
+      return await attachAuditPacesPreview(
+        ctx,
+        snapshot.snapshot,
+        args.legacyAuditId
+      );
+    }
+
+    return await buildAuditDetailFromRawLegacyTables(ctx, args.legacyAuditId);
   },
 });
 
