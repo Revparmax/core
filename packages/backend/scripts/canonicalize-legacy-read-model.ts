@@ -14,6 +14,15 @@ const defaultCompanyIds = new Set([4, 103]);
 const defaultAuditSnapshotIds = new Set([20_265, 20_266]);
 const DEFAULT_CONVEX_URL = "http://127.0.0.1:3210";
 const BATCH_SIZE = 5;
+const RECORD_BATCH_SIZE = 100;
+const ROOM_CATEGORY_IDS = {
+  roomsOccupied: 1,
+  adr: 2,
+  oooRooms: 3,
+  noShows: 4,
+  sameDayCancellations: 7,
+  compRooms: 11,
+} as const;
 
 interface LegacyDocument {
   legacyId?: number;
@@ -50,6 +59,95 @@ interface AuditInfo {
   legacyCompanyId: number;
   preparedBy?: string;
   snapshotDate: string;
+}
+
+interface RevenueCategoryImport {
+  categories: Array<{
+    displayOrder: number;
+    legacyParentRevenueCategoryId?: number;
+    legacyRevenueCategoryId: number;
+    name: string;
+  }>;
+  legacyCompanyId: number;
+  parents: Array<{
+    displayOrder: number;
+    legacyRevenueCategoryId: number;
+    name: string;
+  }>;
+}
+
+interface PaymentTypeImport {
+  legacyCompanyId: number;
+  paymentTypes: Array<{
+    legacyPaymentTypeId: number;
+    name: string;
+  }>;
+}
+
+interface RoomStatisticsImport {
+  adr: number;
+  compRooms: number;
+  legacyAuditId: number;
+  noShows: number;
+  oooRooms: number;
+  roomsOccupied: number;
+  sameDayCancellations: number;
+}
+
+interface NonRoomRevenueImport {
+  amount: number;
+  legacyAuditId: number;
+  legacyCompanyId: number;
+  legacyRevenueCategoryId: number;
+  legacyRevenueStatId: number;
+  source: string;
+}
+
+interface PaymentRecordImport {
+  amount: number;
+  legacyAuditId: number;
+  legacyCompanyId: number;
+  legacyPaymentTypeId: number;
+  legacyPaymentTypeStatId: number;
+  source: string;
+}
+
+interface CompetitorImport {
+  competitors: Array<{
+    enabled: boolean;
+    legacyCompetitionId: number;
+    name: string;
+    totalRooms?: number;
+  }>;
+  legacyCompanyId: number;
+}
+
+interface CompetitionDataImport {
+  capturedAt: number;
+  dailyOccupancy?: number;
+  legacyAuditId: number;
+  legacyCompetitionId: number;
+  legacyCompetitionStatId: number;
+  rate?: number;
+}
+
+interface BudgetImport {
+  revenueBudgets: Array<{
+    amount: number;
+    fiscalYear: number;
+    legacyBudgetRevenueId: number;
+    legacyCompanyId: number;
+    legacyRevenueCategoryId: number;
+    month: number;
+  }>;
+  roomBudgets: Array<{
+    budgetAdr: number;
+    budgetOccupancy: number;
+    fiscalYear: number;
+    legacyBudgetRoomId: number;
+    legacyCompanyId: number;
+    month: number;
+  }>;
 }
 
 interface AuditSnapshotInput {
@@ -321,7 +419,423 @@ const loadAudits = async (
   return audits;
 };
 
-const loadAuditSnapshots = async (
+const loadRevenueCategories = async (
+  options: Options
+): Promise<RevenueCategoryImport[]> => {
+  const rows = await docsForTable(options.sourceDir, "legacyRevenueCategories");
+  const categoriesById = docsByNumberKey(rows, "revenue_category_id");
+  const imports: RevenueCategoryImport[] = [];
+
+  for (const legacyCompanyId of options.companyIds) {
+    const categoryRows = rows.filter((document) => {
+      const parentId = numberFromRow(document.row, "parent_category_id");
+      const companyId = numberFromRow(document.row, "company_id");
+      return (
+        parentId !== undefined &&
+        (companyId === undefined || companyId === legacyCompanyId)
+      );
+    });
+    const parentIds = new Set(
+      categoryRows
+        .map((document) => numberFromRow(document.row, "parent_category_id"))
+        .filter((value) => value !== undefined)
+    );
+    const parents = [...parentIds]
+      .map((legacyRevenueCategoryId, index) => {
+        const parent = categoriesById.get(legacyRevenueCategoryId);
+        const name = nullableString(parent?.row.category_name);
+        return name
+          ? {
+              displayOrder: index,
+              legacyRevenueCategoryId,
+              name,
+            }
+          : null;
+      })
+      .filter((value) => value !== null);
+
+    imports.push({
+      legacyCompanyId,
+      parents,
+      categories: categoryRows
+        .map((document, index) => {
+          const legacyRevenueCategoryId = numberFromRow(
+            document.row,
+            "revenue_category_id"
+          );
+          const name = nullableString(document.row.category_name);
+          if (legacyRevenueCategoryId === undefined || name === null) {
+            return null;
+          }
+          return {
+            displayOrder: index,
+            legacyParentRevenueCategoryId: numberFromRow(
+              document.row,
+              "parent_category_id"
+            ),
+            legacyRevenueCategoryId,
+            name,
+          };
+        })
+        .filter((value) => value !== null),
+    });
+  }
+
+  return imports;
+};
+
+const loadPaymentTypes = async (
+  options: Options
+): Promise<PaymentTypeImport[]> => {
+  const rows = await docsForTable(options.sourceDir, "legacyPaymentTypes");
+
+  return [...options.companyIds].map((legacyCompanyId) => ({
+    legacyCompanyId,
+    paymentTypes: rows
+      .filter((document) => {
+        const companyId = numberFromRow(document.row, "company_id");
+        return companyId === undefined || companyId === legacyCompanyId;
+      })
+      .map((document) => {
+        const legacyPaymentTypeId = numberFromRow(
+          document.row,
+          "payment_type_id"
+        );
+        const name = nullableString(document.row.payment_name);
+        return legacyPaymentTypeId === undefined || name === null
+          ? null
+          : { legacyPaymentTypeId, name };
+      })
+      .filter((value) => value !== null),
+  }));
+};
+
+const auditRowsForMutation = (audits: Map<number, AuditInfo>) =>
+  [...audits.entries()].map(([legacyAuditId, audit]) => ({
+    legacyAuditId,
+    legacyCompanyId: audit.legacyCompanyId,
+    auditDate: audit.snapshotDate,
+    submittedBy: audit.preparedBy ?? "legacy-import",
+  }));
+
+const loadRoomStatistics = async (
+  options: Options,
+  audits: Map<number, AuditInfo>
+): Promise<RoomStatisticsImport[]> => {
+  const byAuditId = new Map<number, Partial<RoomStatisticsImport>>();
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyRoomStats", "documents.jsonl")
+  )) {
+    const legacyAuditId = numberFromRow(document.row, "audit_id");
+    const categoryId = numberFromRow(document.row, "room_category_id");
+    const value = scaled(numberFromRow(document.row, "amount"));
+    if (
+      legacyAuditId === undefined ||
+      categoryId === undefined ||
+      value === undefined ||
+      !audits.has(legacyAuditId)
+    ) {
+      continue;
+    }
+
+    const row = byAuditId.get(legacyAuditId) ?? { legacyAuditId };
+    if (categoryId === ROOM_CATEGORY_IDS.roomsOccupied) {
+      row.roomsOccupied = value;
+    }
+    if (categoryId === ROOM_CATEGORY_IDS.adr) {
+      row.adr = value;
+    }
+    if (categoryId === ROOM_CATEGORY_IDS.oooRooms) {
+      row.oooRooms = value;
+    }
+    if (categoryId === ROOM_CATEGORY_IDS.noShows) {
+      row.noShows = value;
+    }
+    if (categoryId === ROOM_CATEGORY_IDS.sameDayCancellations) {
+      row.sameDayCancellations = value;
+    }
+    if (categoryId === ROOM_CATEGORY_IDS.compRooms) {
+      row.compRooms = value;
+    }
+    byAuditId.set(legacyAuditId, row);
+  }
+
+  return [...byAuditId.values()].map((row) => ({
+    legacyAuditId: row.legacyAuditId ?? 0,
+    roomsOccupied: row.roomsOccupied ?? 0,
+    adr: row.adr ?? 0,
+    sameDayCancellations: row.sameDayCancellations ?? 0,
+    noShows: row.noShows ?? 0,
+    compRooms: row.compRooms ?? 0,
+    oooRooms: row.oooRooms ?? 0,
+  }));
+};
+
+const loadNonRoomRevenue = async (
+  options: Options,
+  audits: Map<number, AuditInfo>
+): Promise<NonRoomRevenueImport[]> => {
+  const categories = docsByNumberKey(
+    await docsForTable(options.sourceDir, "legacyRevenueCategories"),
+    "revenue_category_id"
+  );
+  const rows: NonRoomRevenueImport[] = [];
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyRevenueStats", "documents.jsonl")
+  )) {
+    const legacyAuditId = numberFromRow(document.row, "audit_id");
+    const audit =
+      legacyAuditId === undefined ? undefined : audits.get(legacyAuditId);
+    const legacyRevenueStatId =
+      numberFromRow(document.row, "revenue_stat_id") ?? document.legacyId;
+    const legacyRevenueCategoryId = numberFromRow(
+      document.row,
+      "revenue_category_id"
+    );
+    const amount = scaled(numberFromRow(document.row, "amount"));
+
+    if (
+      audit === undefined ||
+      legacyAuditId === undefined ||
+      legacyRevenueStatId === undefined ||
+      legacyRevenueCategoryId === undefined ||
+      amount === undefined
+    ) {
+      continue;
+    }
+
+    rows.push({
+      legacyRevenueStatId,
+      legacyAuditId,
+      legacyCompanyId: audit.legacyCompanyId,
+      legacyRevenueCategoryId,
+      amount,
+      source:
+        nullableString(
+          categories.get(legacyRevenueCategoryId)?.row.category_name
+        ) ?? `legacy-revenue-category-${legacyRevenueCategoryId}`,
+    });
+  }
+
+  return rows;
+};
+
+const loadPaymentRecords = async (
+  options: Options,
+  audits: Map<number, AuditInfo>
+): Promise<PaymentRecordImport[]> => {
+  const paymentTypes = docsByNumberKey(
+    await docsForTable(options.sourceDir, "legacyPaymentTypes"),
+    "payment_type_id"
+  );
+  const rows: PaymentRecordImport[] = [];
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyPaymentTypeStats", "documents.jsonl")
+  )) {
+    const legacyAuditId = numberFromRow(document.row, "audit_id");
+    const audit =
+      legacyAuditId === undefined ? undefined : audits.get(legacyAuditId);
+    const legacyPaymentTypeStatId =
+      numberFromRow(document.row, "payment_type_stat_id") ?? document.legacyId;
+    const legacyPaymentTypeId = numberFromRow(document.row, "payment_type_id");
+    const amount = scaled(numberFromRow(document.row, "amount"));
+
+    if (
+      audit === undefined ||
+      legacyAuditId === undefined ||
+      legacyPaymentTypeStatId === undefined ||
+      legacyPaymentTypeId === undefined ||
+      amount === undefined
+    ) {
+      continue;
+    }
+
+    rows.push({
+      legacyPaymentTypeStatId,
+      legacyAuditId,
+      legacyCompanyId: audit.legacyCompanyId,
+      legacyPaymentTypeId,
+      amount,
+      source:
+        nullableString(
+          paymentTypes.get(legacyPaymentTypeId)?.row.payment_name
+        ) ?? `legacy-payment-type-${legacyPaymentTypeId}`,
+    });
+  }
+
+  return rows;
+};
+
+const loadCompetitors = async (
+  options: Options
+): Promise<CompetitorImport[]> => {
+  const rows = await docsForTable(options.sourceDir, "legacyCompetitions");
+
+  return [...options.companyIds].map((legacyCompanyId) => ({
+    legacyCompanyId,
+    competitors: rows
+      .filter(
+        (document) =>
+          numberFromRow(document.row, "company_id") === legacyCompanyId
+      )
+      .map((document) => {
+        const legacyCompetitionId =
+          numberFromRow(document.row, "competition_id") ?? document.legacyId;
+        const name = nullableString(document.row.company_name);
+        if (legacyCompetitionId === undefined || name === null) {
+          return null;
+        }
+        const totalRooms = scaled(numberFromRow(document.row, "total_rooms"));
+        return {
+          legacyCompetitionId,
+          name,
+          enabled: numberFromRow(document.row, "enabled") === 1,
+          ...(totalRooms === undefined ? {} : { totalRooms }),
+        };
+      })
+      .filter((value) => value !== null),
+  }));
+};
+
+const loadCompetitionData = async (
+  options: Options,
+  audits: Map<number, AuditInfo>
+): Promise<CompetitionDataImport[]> => {
+  const competitions = docsByNumberKey(
+    await docsForTable(options.sourceDir, "legacyCompetitions"),
+    "competition_id"
+  );
+  const rows: CompetitionDataImport[] = [];
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyCompetitionStats", "documents.jsonl")
+  )) {
+    const legacyAuditId = numberFromRow(document.row, "audit_id");
+    const audit =
+      legacyAuditId === undefined ? undefined : audits.get(legacyAuditId);
+    const legacyCompetitionStatId =
+      numberFromRow(document.row, "competition_stat_id") ?? document.legacyId;
+    const legacyCompetitionId = numberFromRow(document.row, "competition_id");
+    const rate = scaled(numberFromRow(document.row, "rate"));
+    const occupiedRooms = scaled(numberFromRow(document.row, "occupied_rooms"));
+    const totalRooms =
+      legacyCompetitionId === undefined
+        ? undefined
+        : scaled(
+            numberFromRow(
+              competitions.get(legacyCompetitionId)?.row ?? {},
+              "total_rooms"
+            )
+          );
+
+    if (
+      audit === undefined ||
+      legacyAuditId === undefined ||
+      legacyCompetitionStatId === undefined ||
+      legacyCompetitionId === undefined
+    ) {
+      continue;
+    }
+
+    rows.push({
+      legacyCompetitionStatId,
+      legacyAuditId,
+      legacyCompetitionId,
+      capturedAt: Date.parse(`${audit.snapshotDate}T00:00:00.000Z`),
+      ...(rate === undefined ? {} : { rate }),
+      ...(occupiedRooms === undefined ||
+      totalRooms === undefined ||
+      totalRooms <= 0
+        ? {}
+        : { dailyOccupancy: occupiedRooms / totalRooms }),
+    });
+  }
+
+  return rows;
+};
+
+const loadBudgets = async (options: Options): Promise<BudgetImport> => {
+  const roomBudgets: BudgetImport["roomBudgets"] = [];
+  const revenueBudgets: BudgetImport["revenueBudgets"] = [];
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyBudgetRooms", "documents.jsonl")
+  )) {
+    const legacyCompanyId = numberFromRow(document.row, "company_id");
+    const legacyBudgetRoomId =
+      numberFromRow(document.row, "budget_room_id") ?? document.legacyId;
+    const month = numberFromRow(document.row, "month");
+    const fiscalYear = numberFromRow(document.row, "year");
+    const budgetOccupancy = scaled(
+      numberFromRow(document.row, "target_occupancy")
+    );
+    const budgetAdr = scaled(numberFromRow(document.row, "target_adr"));
+
+    if (
+      legacyCompanyId === undefined ||
+      legacyBudgetRoomId === undefined ||
+      month === undefined ||
+      fiscalYear === undefined ||
+      budgetOccupancy === undefined ||
+      budgetAdr === undefined ||
+      !options.companyIds.has(legacyCompanyId)
+    ) {
+      continue;
+    }
+
+    roomBudgets.push({
+      legacyBudgetRoomId,
+      legacyCompanyId,
+      fiscalYear,
+      month,
+      budgetOccupancy: budgetOccupancy / 100,
+      budgetAdr,
+    });
+  }
+
+  for await (const document of readJsonl(
+    path.join(options.sourceDir, "legacyBudgetRevenues", "documents.jsonl")
+  )) {
+    const legacyCompanyId = numberFromRow(document.row, "company_id");
+    const legacyBudgetRevenueId =
+      numberFromRow(document.row, "budget_revenue_id") ?? document.legacyId;
+    const legacyRevenueCategoryId = numberFromRow(
+      document.row,
+      "revenue_category_id"
+    );
+    const month = numberFromRow(document.row, "month");
+    const fiscalYear = numberFromRow(document.row, "year");
+    const amount = scaled(numberFromRow(document.row, "amount"));
+
+    if (
+      legacyCompanyId === undefined ||
+      legacyBudgetRevenueId === undefined ||
+      legacyRevenueCategoryId === undefined ||
+      month === undefined ||
+      fiscalYear === undefined ||
+      amount === undefined ||
+      !options.companyIds.has(legacyCompanyId)
+    ) {
+      continue;
+    }
+
+    revenueBudgets.push({
+      legacyBudgetRevenueId,
+      legacyCompanyId,
+      legacyRevenueCategoryId,
+      fiscalYear,
+      month,
+      amount,
+    });
+  }
+
+  return { revenueBudgets, roomBudgets };
+};
+
+const _loadAuditSnapshots = async (
   options: Options,
   audits: Map<number, AuditInfo>
 ): Promise<AuditSnapshotInput[]> => {
@@ -632,16 +1146,132 @@ const main = async () => {
   console.log(`Canonicalized ${companies.length} legacy companies/properties.`);
 
   const audits = await loadAudits(options);
-  const auditSnapshots = await loadAuditSnapshots(options, audits);
-  let auditSnapshotsUpserted = 0;
-  for (const batch of chunked(auditSnapshots, BATCH_SIZE)) {
+  const revenueCategoryImports = await loadRevenueCategories(options);
+  for (const categoryImport of revenueCategoryImports) {
     const result = await client.mutation(
-      anyApi.legacyBridge.importMutations.upsertLegacyAuditSnapshots,
-      { snapshots: batch }
+      anyApi.legacyBridge.importMutations.upsertLegacyRevenueCategories,
+      categoryImport
     );
-    auditSnapshotsUpserted += Number(result.upserted);
+    console.log(
+      `Canonicalized ${result.upsertedParents} revenue parents and ${result.upsertedCategories} revenue categories for legacy company ${categoryImport.legacyCompanyId}.`
+    );
   }
-  console.log(`Upserted ${auditSnapshotsUpserted} legacy audit snapshots.`);
+
+  const paymentTypeImports = await loadPaymentTypes(options);
+  for (const paymentTypeImport of paymentTypeImports) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyPaymentTypes,
+      paymentTypeImport
+    );
+    console.log(
+      `Canonicalized ${result.upserted} payment types for legacy company ${paymentTypeImport.legacyCompanyId}.`
+    );
+  }
+
+  let auditsUpserted = 0;
+  for (const batch of chunked(
+    auditRowsForMutation(audits),
+    RECORD_BATCH_SIZE
+  )) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyAudits,
+      { audits: batch }
+    );
+    auditsUpserted += Number(result.upserted);
+    console.log(`Upserted ${auditsUpserted}/${audits.size} audit records.`);
+  }
+
+  const roomStatistics = await loadRoomStatistics(options, audits);
+  let roomStatisticsUpserted = 0;
+  for (const batch of chunked(roomStatistics, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyRoomStatistics,
+      { rows: batch }
+    );
+    roomStatisticsUpserted += Number(result.upserted);
+    console.log(
+      `Upserted ${roomStatisticsUpserted}/${roomStatistics.length} room statistic records.`
+    );
+  }
+
+  const nonRoomRevenue = await loadNonRoomRevenue(options, audits);
+  let nonRoomRevenueSkipped = 0;
+  let nonRoomRevenueUpserted = 0;
+  for (const batch of chunked(nonRoomRevenue, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyNonRoomRevenue,
+      { rows: batch }
+    );
+    nonRoomRevenueSkipped += Number(result.skipped);
+    nonRoomRevenueUpserted += Number(result.upserted);
+    console.log(
+      `Upserted ${nonRoomRevenueUpserted}/${nonRoomRevenue.length} non-room revenue records (${nonRoomRevenueSkipped} skipped).`
+    );
+  }
+
+  const paymentRecords = await loadPaymentRecords(options, audits);
+  let paymentRecordsSkipped = 0;
+  let paymentRecordsUpserted = 0;
+  for (const batch of chunked(paymentRecords, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyPaymentRecords,
+      { rows: batch }
+    );
+    paymentRecordsSkipped += Number(result.skipped);
+    paymentRecordsUpserted += Number(result.upserted);
+    console.log(
+      `Upserted ${paymentRecordsUpserted}/${paymentRecords.length} payment records (${paymentRecordsSkipped} skipped).`
+    );
+  }
+
+  const competitorImports = await loadCompetitors(options);
+  for (const competitorImport of competitorImports) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyCompetitors,
+      competitorImport
+    );
+    console.log(
+      `Canonicalized ${result.upserted} competitors for legacy company ${competitorImport.legacyCompanyId}.`
+    );
+  }
+
+  const competitionData = await loadCompetitionData(options, audits);
+  let competitionDataSkipped = 0;
+  let competitionDataUpserted = 0;
+  for (const batch of chunked(competitionData, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyCompetitionData,
+      { rows: batch }
+    );
+    competitionDataSkipped += Number(result.skipped);
+    competitionDataUpserted += Number(result.upserted);
+    console.log(
+      `Upserted ${competitionDataUpserted}/${competitionData.length} competition data records (${competitionDataSkipped} skipped).`
+    );
+  }
+
+  const budgets = await loadBudgets(options);
+  let budgetsSkipped = 0;
+  let budgetsUpserted = 0;
+  for (const batch of chunked(budgets.roomBudgets, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyBudgets,
+      { roomBudgets: batch, revenueBudgets: [] }
+    );
+    budgetsSkipped += Number(result.skipped);
+    budgetsUpserted += Number(result.upserted);
+  }
+  for (const batch of chunked(budgets.revenueBudgets, RECORD_BATCH_SIZE)) {
+    const result = await client.mutation(
+      anyApi.legacyBridge.importMutations.upsertLegacyBudgets,
+      { roomBudgets: [], revenueBudgets: batch }
+    );
+    budgetsSkipped += Number(result.skipped);
+    budgetsUpserted += Number(result.upserted);
+  }
+  console.log(
+    `Upserted ${budgetsUpserted} budget records (${budgetsSkipped} skipped).`
+  );
 
   const buckets = await loadPaceBuckets(options, audits);
   let upserted = 0;

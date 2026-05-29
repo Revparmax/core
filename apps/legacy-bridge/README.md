@@ -33,11 +33,17 @@ Defaults:
 - OpenAPI: `http://127.0.0.1:8787/openapi.json`
 - MCP Streamable HTTP: `http://127.0.0.1:8787/mcp`
 
-Audit detail responses use a materialized `legacyAuditSnapshots` document when
-one exists. If a snapshot has not been materialized yet, the bridge assembles the
-same joined response from the raw `legacy*` mirror tables and includes a 25-row
-pace preview from `paceSnapshotDays`. Full pace reads remain paginated through
-`/audits/{auditId}/paces` and the `get_audit_paces` MCP tool.
+Audit detail responses read canonical RevParMax tables populated by
+`legacy:canonicalize-read-model`: `auditRecords`, `roomStatistics`,
+`nonRoomRevenue`, `paymentRecords`, `competitionData`, `budgets`, and
+`paceSnapshotDays`. The `legacy*` tables are only the frozen extract layer for
+conversion and are not queried by the bridge for normalized app data. Full pace
+reads remain paginated through `/audits/{auditId}/paces` and the
+`get_audit_paces` MCP tool.
+
+Legacy users and hurdle rates are not projected yet because the product schema
+does not currently have canonical tables for them. Their bridge endpoints return
+empty lists until those schemas are defined.
 
 ## Environment
 

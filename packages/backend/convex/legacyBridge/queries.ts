@@ -14,8 +14,6 @@ import {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
-type LegacyDoc = Doc<"legacyCompanies">;
-type LegacyRow = Record<string, unknown>;
 type PaceEntry = Doc<"paceSnapshotDays">["entries"][number];
 type ForecastColorStatus = "green" | "red" | "unavailable" | "yellow";
 
@@ -42,18 +40,6 @@ interface AuditDetailPaces {
   snapshotDate?: string;
   warnings: string[];
 }
-
-const rowNumber = (row: LegacyRow, key: string): number | undefined =>
-  typeof row[key] === "number" ? row[key] : undefined;
-
-const rowString = (row: LegacyRow, key: string): string | undefined =>
-  typeof row[key] === "string" ? row[key] : undefined;
-
-const scaledNumber = (value: unknown): number | null =>
-  typeof value === "number" ? value / 100 : null;
-
-const nullableString = (value: unknown): string | null =>
-  typeof value === "string" ? value : null;
 
 const clampLimit = (limit: number | undefined): number => {
   if (limit === undefined) {
@@ -103,17 +89,26 @@ const sourceRefForLegacyCompany = async (
   return refs.find((ref) => ref.targetTable === targetTable) ?? null;
 };
 
+const sourceRefForTarget = async (
+  ctx: QueryCtx,
+  targetTable: string,
+  targetId: string
+) => {
+  const refs = await ctx.db
+    .query("sourceRefs")
+    .withIndex("by_target", (q) =>
+      q.eq("targetTable", targetTable).eq("targetId", targetId)
+    )
+    .collect();
+
+  return refs.find((candidate) => candidate.source === "legacy") ?? null;
+};
+
 const legacyCompanyIdForProperty = async (
   ctx: QueryCtx,
   propertyId: Id<"properties">
 ): Promise<number> => {
-  const refs = await ctx.db
-    .query("sourceRefs")
-    .withIndex("by_target", (q) =>
-      q.eq("targetTable", "properties").eq("targetId", propertyId)
-    )
-    .collect();
-  const ref = refs.find((candidate) => candidate.source === "legacy");
+  const ref = await sourceRefForTarget(ctx, "properties", propertyId);
 
   if (!ref) {
     throw new ConvexError("Property is not mapped to a legacy company");
@@ -122,85 +117,47 @@ const legacyCompanyIdForProperty = async (
   return ref.legacyId;
 };
 
-const legacyCompanyName = async (
+const canonicalCompanyName = async (
   ctx: QueryCtx,
   legacyCompanyId: number
 ): Promise<string | null> => {
-  const company = await ctx.db
-    .query("legacyCompanies")
-    .withIndex("by_legacyId", (q) => q.eq("legacyId", legacyCompanyId))
-    .first();
-  return nullableString(company?.row.company_name);
+  const companyRef = await sourceRefForLegacyCompany(
+    ctx,
+    legacyCompanyId,
+    "companies"
+  );
+  const company = companyRef
+    ? await ctx.db.get(companyRef.targetId as Id<"companies">)
+    : null;
+
+  return company?.name ?? null;
 };
 
-const legacyCompanyView = async (ctx: QueryCtx, document: LegacyDoc) => {
-  const legacyCompanyId =
-    rowNumber(document.row, "company_id") ?? document.legacyId;
-  if (legacyCompanyId === undefined) {
-    return null;
-  }
-
+const canonicalCompanyView = async (ctx: QueryCtx, legacyCompanyId: number) => {
   const [companyRef, propertyRef] = await Promise.all([
     sourceRefForLegacyCompany(ctx, legacyCompanyId, "companies"),
     sourceRefForLegacyCompany(ctx, legacyCompanyId, "properties"),
   ]);
+  const [company, property] = await Promise.all([
+    companyRef ? ctx.db.get(companyRef.targetId as Id<"companies">) : null,
+    propertyRef ? ctx.db.get(propertyRef.targetId as Id<"properties">) : null,
+  ]);
+
+  if (!company) {
+    return null;
+  }
 
   return {
     legacyCompanyId,
-    companyId: companyRef?.targetId ?? null,
-    propertyId: propertyRef?.targetId ?? null,
-    name: nullableString(document.row.company_name),
-    owner: nullableString(document.row.owner),
-    parentLegacyCompanyId: rowNumber(document.row, "parent_id") ?? null,
-    totalRooms: rowNumber(document.row, "total_rooms") ?? null,
-    status: nullableString(document.row.status),
+    companyId: company._id,
+    propertyId: property?._id ?? null,
+    name: company.name,
+    owner: null,
+    parentLegacyCompanyId: null,
+    totalRooms: property?.totalRooms ?? null,
+    status: property?.status ?? null,
   };
 };
-
-const docsByNumberKey = <T extends { row: LegacyRow }>(
-  docs: T[],
-  key: string
-): Map<number, T> => {
-  const byKey = new Map<number, T>();
-  for (const document of docs) {
-    const value = rowNumber(document.row, key);
-    if (value !== undefined) {
-      byKey.set(value, document);
-    }
-  }
-  return byKey;
-};
-
-const categoryName = (
-  categories: Map<number, { row: LegacyRow }>,
-  id: number | undefined,
-  nameColumn: string
-): string | null => {
-  if (id === undefined) {
-    return null;
-  }
-  return nullableString(categories.get(id)?.row[nameColumn]) ?? `Unknown ${id}`;
-};
-
-const sortedByLegacyId = <T extends { legacyId?: number }>(rows: T[]): T[] =>
-  [...rows].sort(
-    (first, second) => (first.legacyId ?? 0) - (second.legacyId ?? 0)
-  );
-
-const legacyDocsByAuditId = async (
-  ctx: QueryCtx,
-  tableName:
-    | "legacyCompetitionStats"
-    | "legacyFiles"
-    | "legacyPaymentTypeStats"
-    | "legacyReceivedAuditDataTypes"
-    | "legacyRevenueStats"
-    | "legacyRoomStats",
-  legacyAuditId: number
-) =>
-  (await ctx.db.query(tableName).collect()).filter(
-    (document) => rowNumber(document.row, "audit_id") === legacyAuditId
-  );
 
 const entryMapFor = (entries: PaceEntry[]): Map<string, PaceEntry> =>
   new Map(entries.map((entry) => [entry.forDate, entry]));
@@ -268,209 +225,143 @@ const auditPacesPreview = async (
   };
 };
 
-const attachAuditPacesPreview = async (
-  ctx: QueryCtx,
-  snapshot: unknown,
-  legacyAuditId: number
-) => {
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
-    return snapshot;
-  }
-
-  return {
-    ...snapshot,
-    paces: await auditPacesPreview(ctx, legacyAuditId),
-  };
-};
-
-const buildAuditDetailFromRawLegacyTables = async (
+const auditRecordForLegacyAudit = async (
   ctx: QueryCtx,
   legacyAuditId: number
 ) => {
-  const audit = await ctx.db
-    .query("legacyAudits")
-    .withIndex("by_legacyId", (q) => q.eq("legacyId", legacyAuditId))
+  const ref = await ctx.db
+    .query("sourceRefs")
+    .withIndex("by_source_table_legacy", (q) =>
+      q
+        .eq("source", "legacy")
+        .eq("sourceTable", "legacyAudits")
+        .eq("legacyId", legacyAuditId)
+    )
     .first();
 
-  if (!audit) {
+  if (!ref || ref.targetTable !== "auditRecords") {
     return null;
   }
 
-  const legacyCompanyId = rowNumber(audit.row, "company_id");
-  const [
-    company,
-    roomCategories,
-    revenueCategories,
-    paymentTypes,
-    competitions,
-    competitionExtcodes,
-    auditDataTypes,
-    roomStats,
-    revenueStats,
-    paymentTypeStats,
-    competitionStats,
-    files,
-    receivedAuditDataTypes,
-    paces,
-  ] = await Promise.all([
-    legacyCompanyId === undefined
-      ? Promise.resolve(null)
-      : ctx.db
-          .query("legacyCompanies")
-          .withIndex("by_legacyId", (q) => q.eq("legacyId", legacyCompanyId))
-          .first(),
-    ctx.db.query("legacyRoomCategories").collect(),
-    ctx.db.query("legacyRevenueCategories").collect(),
-    ctx.db.query("legacyPaymentTypes").collect(),
-    ctx.db.query("legacyCompetitions").collect(),
-    ctx.db.query("legacyCompetitionExtcodes").collect(),
-    ctx.db.query("legacyAuditDataTypes").collect(),
-    legacyDocsByAuditId(ctx, "legacyRoomStats", legacyAuditId),
-    legacyDocsByAuditId(ctx, "legacyRevenueStats", legacyAuditId),
-    legacyDocsByAuditId(ctx, "legacyPaymentTypeStats", legacyAuditId),
-    legacyDocsByAuditId(ctx, "legacyCompetitionStats", legacyAuditId),
-    legacyDocsByAuditId(ctx, "legacyFiles", legacyAuditId),
-    legacyDocsByAuditId(ctx, "legacyReceivedAuditDataTypes", legacyAuditId),
-    auditPacesPreview(ctx, legacyAuditId),
-  ]);
+  const audit = await ctx.db.get(ref.targetId as Id<"auditRecords">);
+  return audit ? { audit, legacyAuditId } : null;
+};
 
-  const roomCategoryById = docsByNumberKey(roomCategories, "room_category_id");
-  const revenueCategoryById = docsByNumberKey(
-    revenueCategories,
-    "revenue_category_id"
-  );
-  const paymentTypeById = docsByNumberKey(paymentTypes, "payment_type_id");
-  const competitionById = docsByNumberKey(competitions, "competition_id");
-  const auditDataTypeById = docsByNumberKey(
-    auditDataTypes,
-    "audit_data_type_id"
-  );
-  const extcodesByCompetitionId = new Map<number, string[]>();
-
-  for (const extcode of competitionExtcodes) {
-    const competitionId = rowNumber(extcode.row, "competition_id");
-    if (competitionId === undefined) {
-      continue;
-    }
-    const extcodes = extcodesByCompetitionId.get(competitionId) ?? [];
-    extcodes.push(
-      `${rowString(extcode.row, "source") ?? "unknown"}:${
-        rowString(extcode.row, "external_code") ?? ""
-      }`
-    );
-    extcodesByCompetitionId.set(competitionId, extcodes);
+const canonicalAuditDetail = async (ctx: QueryCtx, legacyAuditId: number) => {
+  const auditRef = await auditRecordForLegacyAudit(ctx, legacyAuditId);
+  if (!auditRef) {
+    return null;
   }
+
+  const { audit } = auditRef;
+  const [company, roomStats, revenueStats, paymentStats, competitionStats] =
+    await Promise.all([
+      ctx.db.get(audit.companyId),
+      ctx.db
+        .query("roomStatistics")
+        .withIndex("by_auditId", (q) => q.eq("auditId", audit._id))
+        .first(),
+      ctx.db
+        .query("nonRoomRevenue")
+        .withIndex("by_auditId", (q) => q.eq("auditId", audit._id))
+        .collect(),
+      ctx.db
+        .query("paymentRecords")
+        .withIndex("by_auditId", (q) => q.eq("auditId", audit._id))
+        .collect(),
+      ctx.db
+        .query("competitionData")
+        .withIndex("by_auditId", (q) => q.eq("auditId", audit._id))
+        .collect(),
+    ]);
+  const legacyCompanyRef = await sourceRefForTarget(
+    ctx,
+    "companies",
+    audit.companyId
+  );
 
   return {
     audit: {
       legacyAuditId,
-      legacyCompanyId: legacyCompanyId ?? null,
-      companyName: nullableString(company?.row.company_name),
-      date: nullableString(audit.row.date),
-      preparedBy: nullableString(audit.row.prepared_by),
-      comments: nullableString(audit.row.comments),
-      source: "raw_legacy_tables",
+      legacyCompanyId: legacyCompanyRef?.legacyId ?? null,
+      companyName: company?.name ?? null,
+      date: audit.auditDate,
+      preparedBy: audit.submittedBy,
+      comments: null,
+      source: "canonical_tables",
     },
-    roomStats: sortedByLegacyId(roomStats).map((document) => {
-      const categoryId = rowNumber(document.row, "room_category_id");
-      return {
-        legacyRoomStatId:
-          rowNumber(document.row, "room_stat_id") ?? document.legacyId,
-        legacyRoomCategoryId: categoryId ?? null,
-        roomCategory: categoryName(
-          roomCategoryById,
-          categoryId,
-          "category_name"
-        ),
-        amount: scaledNumber(document.row.amount),
-      };
-    }),
-    revenueStats: sortedByLegacyId(revenueStats).map((document) => {
-      const categoryId = rowNumber(document.row, "revenue_category_id");
-      const category = categoryId
-        ? revenueCategoryById.get(categoryId)
-        : undefined;
-      const parentId = rowNumber(category?.row ?? {}, "parent_category_id");
-      return {
-        legacyRevenueStatId:
-          rowNumber(document.row, "revenue_stat_id") ?? document.legacyId,
-        legacyRevenueCategoryId: categoryId ?? null,
-        revenueCategory: categoryName(
-          revenueCategoryById,
-          categoryId,
-          "category_name"
-        ),
-        parentCategory: categoryName(
-          revenueCategoryById,
-          parentId,
-          "category_name"
-        ),
-        amount: scaledNumber(document.row.amount),
-      };
-    }),
-    paymentTypeStats: sortedByLegacyId(paymentTypeStats).map((document) => {
-      const paymentTypeId = rowNumber(document.row, "payment_type_id");
-      return {
-        legacyPaymentTypeStatId:
-          rowNumber(document.row, "payment_type_stat_id") ?? document.legacyId,
-        legacyPaymentTypeId: paymentTypeId ?? null,
-        paymentType: categoryName(
-          paymentTypeById,
-          paymentTypeId,
-          "payment_name"
-        ),
-        amount: scaledNumber(document.row.amount),
-      };
-    }),
-    competitionStats: sortedByLegacyId(competitionStats).map((document) => {
-      const competitionId = rowNumber(document.row, "competition_id");
-      const competition = competitionId
-        ? competitionById.get(competitionId)
-        : undefined;
-      return {
-        legacyCompetitionStatId:
-          rowNumber(document.row, "competition_stat_id") ?? document.legacyId,
-        legacyCompetitionId: competitionId ?? null,
-        competitor: nullableString(competition?.row.company_name),
-        totalRooms: scaledNumber(competition?.row.total_rooms),
-        enabled: rowNumber(competition?.row ?? {}, "enabled") === 1,
-        extcodes: competitionId
-          ? (extcodesByCompetitionId.get(competitionId) ?? [])
-          : [],
-        rate: scaledNumber(document.row.rate),
-        occupiedRooms: scaledNumber(document.row.occupied_rooms),
-      };
-    }),
-    files: sortedByLegacyId(files).map((document) => ({
-      legacyFileId: rowNumber(document.row, "file_id") ?? document.legacyId,
-      title: nullableString(document.row.file_title),
-      filename: nullableString(document.row.file_name),
-      mimeType: nullableString(document.row.file_mimetype),
-      size: rowNumber(document.row, "file_size") ?? null,
-    })),
-    receivedAuditDataTypes: sortedByLegacyId(receivedAuditDataTypes).map(
-      (document) => {
-        const typeId = rowNumber(document.row, "audit_data_type_id");
-        const auditDataType = typeId
-          ? auditDataTypeById.get(typeId)
-          : undefined;
+    roomStats: roomStats
+      ? [
+          { roomCategory: "Rooms Occupied", amount: roomStats.roomsOccupied },
+          { roomCategory: "ADR $", amount: roomStats.adr },
+          {
+            roomCategory: "Same Day Cancellations",
+            amount: roomStats.sameDayCancellations,
+          },
+          { roomCategory: "No Shows", amount: roomStats.noShows },
+          { roomCategory: "Comp Rooms", amount: roomStats.compRooms },
+          { roomCategory: "Out of Order Rooms", amount: roomStats.oooRooms },
+        ]
+      : [],
+    revenueStats: await Promise.all(
+      revenueStats.map(async (record) => {
+        const [category, ref] = await Promise.all([
+          ctx.db.get(record.categoryId),
+          sourceRefForTarget(ctx, "nonRoomRevenue", record._id),
+        ]);
+        const parent = category?.parentId
+          ? await ctx.db.get(category.parentId)
+          : null;
         return {
-          legacyReceivedAuditDataTypeId:
-            rowNumber(document.row, "received_audit_data_type_id") ??
-            document.legacyId,
-          legacyAuditDataTypeId: typeId ?? null,
-          auditDataType: categoryName(
-            auditDataTypeById,
-            typeId,
-            "audit_data_type_name"
-          ),
-          source: nullableString(auditDataType?.row.source),
-          receivedTimestamp: nullableString(document.row.received_timestamp),
-          method: nullableString(document.row.method),
+          legacyRevenueStatId: ref?.legacyId ?? null,
+          legacyRevenueCategoryId: null,
+          revenueCategory: category?.name ?? record.source,
+          parentCategory: parent?.name ?? null,
+          amount: record.amount,
         };
-      }
+      })
     ),
-    paces,
+    paymentTypeStats: await Promise.all(
+      paymentStats.map(async (record) => {
+        const [paymentType, ref] = await Promise.all([
+          ctx.db.get(record.paymentTypeId),
+          sourceRefForTarget(ctx, "paymentRecords", record._id),
+        ]);
+        return {
+          legacyPaymentTypeStatId: ref?.legacyId ?? null,
+          legacyPaymentTypeId: null,
+          paymentType: paymentType?.name ?? record.source,
+          amount: record.amount,
+        };
+      })
+    ),
+    competitionStats: await Promise.all(
+      competitionStats.map(async (record) => {
+        const [competitor, ref] = await Promise.all([
+          ctx.db.get(record.competitorId),
+          sourceRefForTarget(ctx, "competitionData", record._id),
+        ]);
+        return {
+          legacyCompetitionStatId: ref?.legacyId ?? null,
+          legacyCompetitionId: null,
+          competitor: competitor?.name ?? null,
+          totalRooms: competitor?.totalRooms ?? null,
+          enabled: competitor?.archivedAt === undefined,
+          extcodes: [],
+          rate: record.rate ?? null,
+          occupiedRooms:
+            record.dailyOccupancy !== undefined && competitor?.totalRooms
+              ? record.dailyOccupancy * competitor.totalRooms
+              : null,
+        };
+      })
+    ),
+    files: [],
+    receivedAuditDataTypes: [],
+    paces: await auditPacesPreview(ctx, legacyAuditId),
+    warnings: [
+      "files and receivedAuditDataTypes have not been projected into canonical tables yet.",
+    ],
   };
 };
 
@@ -740,11 +631,16 @@ const monthlyProjectionSummary = (
 export const listCompanies = query({
   args: {},
   handler: async (ctx) => {
-    const companies = await ctx.db.query("legacyCompanies").collect();
-    const views = await Promise.all(
-      sortedByLegacyId(companies).map((document) =>
-        legacyCompanyView(ctx, document)
+    const companyRefs = (await ctx.db.query("sourceRefs").collect())
+      .filter(
+        (ref) =>
+          ref.source === "legacy" &&
+          ref.sourceTable === "legacyCompanies" &&
+          ref.targetTable === "companies"
       )
+      .sort((first, second) => first.legacyId - second.legacyId);
+    const views = await Promise.all(
+      companyRefs.map((ref) => canonicalCompanyView(ctx, ref.legacyId))
     );
     return views.filter((company) => company !== null);
   },
@@ -753,16 +649,7 @@ export const listCompanies = query({
 export const listProperties = query({
   args: { legacyCompanyId: v.number() },
   handler: async (ctx, args) => {
-    const company = await ctx.db
-      .query("legacyCompanies")
-      .withIndex("by_legacyId", (q) => q.eq("legacyId", args.legacyCompanyId))
-      .first();
-
-    if (!company) {
-      return [];
-    }
-
-    const view = await legacyCompanyView(ctx, company);
+    const view = await canonicalCompanyView(ctx, args.legacyCompanyId);
     return view ? [view] : [];
   },
 });
@@ -783,35 +670,51 @@ export const listAudits = query({
       assertIsoDate(args.toDate);
     }
 
-    const audits = (await ctx.db.query("legacyAudits").collect())
-      .filter((document) => {
-        const row = document.row;
-        const auditDate = rowString(row, "date");
-        return (
-          rowNumber(row, "company_id") === args.legacyCompanyId &&
-          auditDate !== undefined &&
-          (!args.fromDate || auditDate >= args.fromDate) &&
-          (!args.toDate || auditDate <= args.toDate)
-        );
-      })
-      .sort((first, second) =>
-        (rowString(first.row, "date") ?? "").localeCompare(
-          rowString(second.row, "date") ?? ""
+    const companyRef = await sourceRefForLegacyCompany(
+      ctx,
+      args.legacyCompanyId,
+      "companies"
+    );
+    if (!companyRef) {
+      return { items: [], nextCursor: null };
+    }
+
+    const audits = (
+      await ctx.db
+        .query("auditRecords")
+        .withIndex("by_companyId", (q) =>
+          q.eq("companyId", companyRef.targetId as Id<"companies">)
         )
-      );
+        .collect()
+    )
+      .filter(
+        (audit) =>
+          (!args.fromDate || audit.auditDate >= args.fromDate) &&
+          (!args.toDate || audit.auditDate <= args.toDate)
+      )
+      .sort((first, second) => first.auditDate.localeCompare(second.auditDate));
 
     const paged = paginate(audits, args.limit, args.cursor);
-    const companyName = await legacyCompanyName(ctx, args.legacyCompanyId);
+    const companyName = await canonicalCompanyName(ctx, args.legacyCompanyId);
 
     return {
-      items: paged.items.map((document) => ({
-        legacyAuditId: rowNumber(document.row, "audit_id") ?? document.legacyId,
-        legacyCompanyId: args.legacyCompanyId,
-        companyName,
-        date: rowString(document.row, "date"),
-        preparedBy: nullableString(document.row.prepared_by),
-        comments: nullableString(document.row.comments),
-      })),
+      items: await Promise.all(
+        paged.items.map(async (audit) => {
+          const legacyAuditRef = await sourceRefForTarget(
+            ctx,
+            "auditRecords",
+            audit._id
+          );
+          return {
+            legacyAuditId: legacyAuditRef?.legacyId ?? null,
+            legacyCompanyId: args.legacyCompanyId,
+            companyName,
+            date: audit.auditDate,
+            preparedBy: audit.submittedBy,
+            comments: null,
+          };
+        })
+      ),
       nextCursor: paged.nextCursor,
     };
   },
@@ -819,24 +722,8 @@ export const listAudits = query({
 
 export const getAuditDetail = query({
   args: { legacyAuditId: v.number() },
-  handler: async (ctx, args) => {
-    const snapshot = await ctx.db
-      .query("legacyAuditSnapshots")
-      .withIndex("by_legacyAuditId", (q) =>
-        q.eq("legacyAuditId", args.legacyAuditId)
-      )
-      .first();
-
-    if (snapshot) {
-      return await attachAuditPacesPreview(
-        ctx,
-        snapshot.snapshot,
-        args.legacyAuditId
-      );
-    }
-
-    return await buildAuditDetailFromRawLegacyTables(ctx, args.legacyAuditId);
-  },
+  handler: async (ctx, args) =>
+    await canonicalAuditDetail(ctx, args.legacyAuditId),
 });
 
 export const getAuditPaces = query({
@@ -882,96 +769,97 @@ export const getAuditPaces = query({
 
 export const listUsers = query({
   args: { legacyCompanyId: v.number() },
-  handler: async (ctx, args) => {
-    const users = (await ctx.db.query("legacyUsers").collect()).filter(
-      (document) =>
-        rowNumber(document.row, "company_id") === args.legacyCompanyId
-    );
-
-    return sortedByLegacyId(users).map((document) => ({
-      legacyUserId: rowNumber(document.row, "user_id") ?? document.legacyId,
-      firstName: nullableString(document.row.first_name),
-      lastName: nullableString(document.row.last_name),
-      email: nullableString(document.row.email),
-      role: nullableString(document.row.role),
-      dateJoined: nullableString(document.row.date_joined),
-      deleted: rowNumber(document.row, "deleted") === 1,
-      passwordHashPresent: typeof document.row.password === "string",
-    }));
-  },
+  handler: async () => [],
 });
 
 export const getHurdleRates = query({
   args: { legacyCompanyId: v.number() },
-  handler: async (ctx, args) => {
-    const rows = (await ctx.db.query("legacyHurdleRates").collect()).filter(
-      (document) =>
-        rowNumber(document.row, "company_id") === args.legacyCompanyId
-    );
-
-    return sortedByLegacyId(rows).map((document) => ({
-      legacyHurdleRateId:
-        rowNumber(document.row, "hurdle_rate_id") ?? document.legacyId,
-      bottomRange: rowNumber(document.row, "bottom_range") ?? null,
-      topRange: rowNumber(document.row, "top_range") ?? null,
-      min: rowNumber(document.row, "min") ?? null,
-      max: rowNumber(document.row, "max") ?? null,
-    }));
-  },
+  handler: async () => [],
 });
 
 export const getRoomBudget = query({
   args: { legacyCompanyId: v.number(), year: v.number(), month: v.number() },
   handler: async (ctx, args) => {
-    const rows = (await ctx.db.query("legacyBudgetRooms").collect()).filter(
+    const propertyRef = await sourceRefForLegacyCompany(
+      ctx,
+      args.legacyCompanyId,
+      "properties"
+    );
+    if (!propertyRef) {
+      return [];
+    }
+
+    const rows = (
+      await ctx.db
+        .query("budgets")
+        .withIndex("by_propertyId_year", (q) =>
+          q
+            .eq("propertyId", propertyRef.targetId as Id<"properties">)
+            .eq("fiscalYear", args.year)
+        )
+        .collect()
+    ).filter(
       (document) =>
-        rowNumber(document.row, "company_id") === args.legacyCompanyId &&
-        rowNumber(document.row, "year") === args.year &&
-        rowNumber(document.row, "month") === args.month
+        document.month === args.month && document.categoryId === undefined
     );
 
-    return sortedByLegacyId(rows).map((document) => ({
-      legacyBudgetRoomId:
-        rowNumber(document.row, "budget_room_id") ?? document.legacyId,
-      targetOccupancy: scaledNumber(document.row.target_occupancy),
-      targetAdr: scaledNumber(document.row.target_adr),
-    }));
+    return await Promise.all(
+      rows.map(async (document) => {
+        const ref = await sourceRefForTarget(ctx, "budgets", document._id);
+        return {
+          legacyBudgetRoomId: ref?.legacyId ?? null,
+          targetOccupancy: document.budgetOccupancy ?? null,
+          targetAdr: document.budgetAdr ?? null,
+        };
+      })
+    );
   },
 });
 
 export const getRevenueBudget = query({
   args: { legacyCompanyId: v.number(), year: v.number(), month: v.number() },
   handler: async (ctx, args) => {
-    const [rows, categories] = await Promise.all([
-      ctx.db.query("legacyBudgetRevenues").collect(),
-      ctx.db.query("legacyRevenueCategories").collect(),
-    ]);
-    const categoryById = docsByNumberKey(categories, "revenue_category_id");
+    const propertyRef = await sourceRefForLegacyCompany(
+      ctx,
+      args.legacyCompanyId,
+      "properties"
+    );
+    if (!propertyRef) {
+      return [];
+    }
 
-    return sortedByLegacyId(
-      rows.filter(
-        (document) =>
-          rowNumber(document.row, "company_id") === args.legacyCompanyId &&
-          rowNumber(document.row, "year") === args.year &&
-          rowNumber(document.row, "month") === args.month
-      )
-    ).map((document) => {
-      const categoryId = rowNumber(document.row, "revenue_category_id");
-      const category = categoryId ? categoryById.get(categoryId) : undefined;
-      const parentId = rowNumber(category?.row ?? {}, "parent_category_id");
-      return {
-        legacyBudgetRevenueId:
-          rowNumber(document.row, "budget_revenue_id") ?? document.legacyId,
-        legacyRevenueCategoryId: categoryId ?? null,
-        revenueCategory: categoryName(
-          categoryById,
-          categoryId,
-          "category_name"
-        ),
-        parentCategory: categoryName(categoryById, parentId, "category_name"),
-        amount: scaledNumber(document.row.amount),
-      };
-    });
+    const rows = (
+      await ctx.db
+        .query("budgets")
+        .withIndex("by_propertyId_year", (q) =>
+          q
+            .eq("propertyId", propertyRef.targetId as Id<"properties">)
+            .eq("fiscalYear", args.year)
+        )
+        .collect()
+    ).filter(
+      (document) =>
+        document.month === args.month && document.categoryId !== undefined
+    );
+
+    return await Promise.all(
+      rows.map(async (document) => {
+        const [category, ref] = await Promise.all([
+          document.categoryId ? ctx.db.get(document.categoryId) : null,
+          sourceRefForTarget(ctx, "budgets", document._id),
+        ]);
+        const parent = category?.parentId
+          ? await ctx.db.get(category.parentId)
+          : null;
+        return {
+          legacyBudgetRevenueId: ref?.legacyId ?? null,
+          legacyRevenueCategoryId: null,
+          revenueCategory: category?.name ?? null,
+          parentCategory: parent?.name ?? null,
+          amount: document.budgetAmount ?? null,
+        };
+      })
+    );
   },
 });
 
@@ -1062,15 +950,19 @@ export const getMonthForecast = query({
       args.propertyId
     );
     const [yearText, monthText] = args.month.split("-");
-    const roomBudgets = await ctx.db.query("legacyBudgetRooms").collect();
+    const roomBudgets = await ctx.db
+      .query("budgets")
+      .withIndex("by_propertyId_year", (q) =>
+        q.eq("propertyId", args.propertyId).eq("fiscalYear", Number(yearText))
+      )
+      .collect();
     const roomBudget = roomBudgets.find(
       (document) =>
-        rowNumber(document.row, "company_id") === legacyCompanyId &&
-        rowNumber(document.row, "year") === Number(yearText) &&
-        rowNumber(document.row, "month") === Number(monthText)
+        document.month === Number(monthText) &&
+        document.categoryId === undefined
     );
-    const budgetAdr = scaledNumber(roomBudget?.row.target_adr);
-    const budgetOccupancy = scaledNumber(roomBudget?.row.target_occupancy);
+    const budgetAdr = roomBudget?.budgetAdr ?? null;
+    const budgetOccupancy = roomBudget?.budgetOccupancy ?? null;
     const tyEntries = entryMapFor(tyBucket.entries);
     const tyMonthStartEntries = entryMapFor(tyMonthStartBucket.entries);
     const lyMonthStartDate = sameWeekdayLastYear(tyMonthBaselineDate);
