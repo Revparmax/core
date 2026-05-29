@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ReviewRouteImport } from './routes/review'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
@@ -16,6 +17,11 @@ import { Route as UploadPropertyIdRouteImport } from './routes/upload/$propertyI
 import { Route as UploadVerifyImportIdRouteImport } from './routes/upload/verify/$importId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
+const ReviewRoute = ReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/review': typeof ReviewRoute
   '/upload/$propertyId': typeof UploadPropertyIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/upload/verify/$importId': typeof UploadVerifyImportIdRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/review': typeof ReviewRoute
   '/upload/$propertyId': typeof UploadPropertyIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/upload/verify/$importId': typeof UploadVerifyImportIdRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/onboarding': typeof OnboardingRoute
+  '/review': typeof ReviewRoute
   '/upload/$propertyId': typeof UploadPropertyIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/upload/verify/$importId': typeof UploadVerifyImportIdRoute
@@ -78,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/onboarding'
+    | '/review'
     | '/upload/$propertyId'
     | '/api/auth/$'
     | '/upload/verify/$importId'
@@ -86,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/onboarding'
+    | '/review'
     | '/upload/$propertyId'
     | '/api/auth/$'
     | '/upload/verify/$importId'
@@ -94,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/onboarding'
+    | '/review'
     | '/upload/$propertyId'
     | '/api/auth/$'
     | '/upload/verify/$importId'
@@ -103,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
   OnboardingRoute: typeof OnboardingRoute
+  ReviewRoute: typeof ReviewRoute
   UploadPropertyIdRoute: typeof UploadPropertyIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   UploadVerifyImportIdRoute: typeof UploadVerifyImportIdRoute
@@ -110,6 +123,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/review': {
+      id: '/review'
+      path: '/review'
+      fullPath: '/review'
+      preLoaderRoute: typeof ReviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/onboarding': {
       id: '/onboarding'
       path: '/onboarding'
@@ -159,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
   OnboardingRoute: OnboardingRoute,
+  ReviewRoute: ReviewRoute,
   UploadPropertyIdRoute: UploadPropertyIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   UploadVerifyImportIdRoute: UploadVerifyImportIdRoute,

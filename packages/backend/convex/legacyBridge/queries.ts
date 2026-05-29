@@ -692,7 +692,7 @@ export const listAudits = query({
           (!args.fromDate || audit.auditDate >= args.fromDate) &&
           (!args.toDate || audit.auditDate <= args.toDate)
       )
-      .sort((first, second) => first.auditDate.localeCompare(second.auditDate));
+      .sort((first, second) => second.auditDate.localeCompare(first.auditDate));
 
     const paged = paginate(audits, args.limit, args.cursor);
     const companyName = await canonicalCompanyName(ctx, args.legacyCompanyId);
