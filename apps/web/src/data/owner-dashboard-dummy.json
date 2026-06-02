@@ -1,0 +1,139 @@
+{
+  "asOf": "2026-05-22",
+  "portfolio": {
+    "name": "Oakville + Riverport Portfolio",
+    "modeledMonthEndRevenue": 912400,
+    "budgetRevenue": 861000,
+    "forecastRevenue": 887500,
+    "lastYearRevenue": 824200,
+    "budgetAttainment": 105.97,
+    "projectedOccupancy": 79.4,
+    "projectedAdr": 156.82,
+    "projectedRevpar": 124.52,
+    "bookedNext30Revenue": 628900,
+    "moneyOnTable": 37600,
+    "confidence": "High",
+    "freshness": "Last verified audit: May 22"
+  },
+  "trend": [
+    { "label": "May 1", "actual": 38500, "modeled": 38500, "budget": 27806 },
+    { "label": "May 4", "actual": 119800, "modeled": 119800, "budget": 111096 },
+    { "label": "May 7", "actual": 212400, "modeled": 212400, "budget": 194322 },
+    {
+      "label": "May 10",
+      "actual": 309100,
+      "modeled": 309100,
+      "budget": 277548
+    },
+    {
+      "label": "May 13",
+      "actual": 414600,
+      "modeled": 414600,
+      "budget": 360774
+    },
+    {
+      "label": "May 16",
+      "actual": 516900,
+      "modeled": 516900,
+      "budget": 444000
+    },
+    {
+      "label": "May 19",
+      "actual": 627300,
+      "modeled": 627300,
+      "budget": 527226
+    },
+    {
+      "label": "May 22",
+      "actual": 704200,
+      "modeled": 704200,
+      "budget": 610452
+    },
+    { "label": "May 25", "actual": null, "modeled": 790400, "budget": 693678 },
+    { "label": "May 28", "actual": null, "modeled": 865100, "budget": 776904 },
+    { "label": "May 31", "actual": null, "modeled": 912400, "budget": 861000 }
+  ],
+  "properties": [
+    {
+      "id": "hiex-riverport",
+      "name": "Holiday Inn Express Riverport",
+      "rooms": 147,
+      "modeledRevenue": 492800,
+      "budgetRevenue": 458000,
+      "budgetDelta": 34800,
+      "budgetAttainment": 107.6,
+      "projectedOccupancy": 82.1,
+      "projectedAdr": 151.4,
+      "projectedRevpar": 124.29,
+      "bookedNext30Revenue": 341200,
+      "moneyOnTable": 21800,
+      "paceStatus": "Ahead",
+      "freshnessStatus": "current"
+    },
+    {
+      "id": "hgi-oakville",
+      "name": "Hilton Garden Inn Oakville",
+      "rooms": 127,
+      "modeledRevenue": 419600,
+      "budgetRevenue": 403000,
+      "budgetDelta": 16600,
+      "budgetAttainment": 104.1,
+      "projectedOccupancy": 76.3,
+      "projectedAdr": 164.9,
+      "projectedRevpar": 125.82,
+      "bookedNext30Revenue": 287700,
+      "moneyOnTable": 15800,
+      "paceStatus": "Ahead",
+      "freshnessStatus": "watch"
+    }
+  ],
+  "demandWindows": [
+    {
+      "id": "memorial-weekend",
+      "window": "May 24-27",
+      "label": "Long weekend",
+      "demand": 92,
+      "rateGap": 18,
+      "upside": 12400
+    },
+    {
+      "id": "midweek-group",
+      "window": "Jun 3-6",
+      "label": "Midweek group compression",
+      "demand": 84,
+      "rateGap": 11,
+      "upside": 7800
+    },
+    {
+      "id": "soft-sunday",
+      "window": "Jun 9",
+      "label": "Soft shoulder night",
+      "demand": 58,
+      "rateGap": -6,
+      "upside": 1900
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "riverport-weekend-rate",
+      "title": "Push Riverport weekend ADR",
+      "body": "Modeled demand supports a $14-$22 lift across the May 24-27 window.",
+      "impact": 12400,
+      "tone": "win"
+    },
+    {
+      "id": "oakville-group-watch",
+      "title": "Hold Oakville group ceiling",
+      "body": "Pickup is ahead of budget; avoid discounting the June 3-6 midweek block.",
+      "impact": 7800,
+      "tone": "win"
+    },
+    {
+      "id": "portfolio-digest",
+      "title": "Send owner digest",
+      "body": "Portfolio is modeled $51.4K above budget with upside concentrated in two demand windows.",
+      "impact": 0,
+      "tone": "neutral"
+    }
+  ]
+}
