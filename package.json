@@ -36,6 +36,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.0",
     "@my-better-t-app/config": "workspace:*",
+    "@socketsecurity/bun-security-scanner": "^1.1.2",
     "husky": "latest",
     "lint-staged": "latest",
     "turbo": "^2.6.3",
