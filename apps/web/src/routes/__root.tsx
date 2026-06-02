@@ -7,6 +7,7 @@ import {
   Outlet,
   Scripts,
   useRouteContext,
+  useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { createServerFn } from "@tanstack/react-start";
@@ -46,6 +47,11 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
         rel: "stylesheet",
         href: appCss,
       },
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "/favicon.svg",
+      },
     ],
   }),
 
@@ -62,23 +68,40 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   },
 });
 
+const DESIGN_SURFACE_PATHS = ["/design", "/brand"];
+const LIGHT_THEME_PATHS = ["/brand"];
+
 function RootDocument() {
   const context = useRouteContext({ from: Route.id });
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isDesignSurface = DESIGN_SURFACE_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+  const isLightOnly = LIGHT_THEME_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+
   return (
     <ConvexBetterAuthProvider
       authClient={authClient}
       client={context.convexQueryClient.convexClient}
       initialToken={context.token}
     >
-      <html className="dark" lang="en">
+      <html className={isLightOnly ? "" : "dark"} lang="en">
         <head>
           <HeadContent />
         </head>
         <body>
-          <div className="grid h-svh grid-rows-[auto_1fr]">
-            <Header />
-            <Outlet />
-          </div>
+          {isDesignSurface ? (
+            <div className="h-svh">
+              <Outlet />
+            </div>
+          ) : (
+            <div className="grid h-svh grid-rows-[auto_1fr]">
+              <Header />
+              <Outlet />
+            </div>
+          )}
           <Toaster richColors />
           <TanStackRouterDevtools position="bottom-left" />
           <Scripts />
